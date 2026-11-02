@@ -168,7 +168,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
       <div class="note">File .plt chia khung thành các đoạn bằng nhau, mỗi đoạn không quá số này (file mẫu của plugin: khung 1049 mm → 2 đoạn).</div>
       <label>Địa chỉ máy cắt (trạm Corel)<input type="text" id="corelAddr" placeholder="192.168.x.x:8687" style="width:150px;font-family:var(--f-mono)"></label>
       <button id="btnCorel" disabled>Gửi sang Corel máy cắt</button>
-      <div class="note" id="corelNote">Máy cắt mở "CHAY TRAM COREL.bat". Corel ở máy cắt tự dựng file có hình in + đường cắt; bấm plugin HBC để thêm dấu rồi cắt.</div>
+      <div class="note" id="corelNote">Máy cắt mở "CHAY TRAM COREL.bat". Corel ở máy cắt tự dựng file có hình in + đường cắt. Lưu ý: dấu trên TIF cách đường cắt 10 mm, còn plugin HBC tự đặt dấu cách 20 mm, nên cắt tờ in từ TIF thì dùng file .plt của app, đừng thêm dấu bằng plugin.</div>
     </div>
     <div class="sec" id="optTranh" style="padding:0;border:0" hidden>
       <label>Đường kính chấm (mm)<input type="number" id="dotD" value="6" min="1" max="30" step="0.5"></label>
@@ -704,7 +704,7 @@ async function planLayout(G, p) {
   if (p.group && perSet > 1 && (p.fill || setCount(p) > 1)) { const g = await planGroups(G, p, Hc, Wc); if (g) return g; }
   const cands = [G.same ? planLattice(G, p, Hc, Wc) : null, await planGreedy(G, p, Hc, Wc)].filter(Boolean);
   if (!cands.length) return null;
-  const used = c => c.sheets.reduce((t, s) => t + (p.horiz ? s.H : s.W), 0) - (p.fill ? c.sheets[0].items.length * 1e6 : 0);
+  const used = c => c.sheets.reduce((t, s) => t + (p.horiz ? s.H + LEN_W * s.W : s.W + LEN_W * s.H), 0) - (p.fill ? c.sheets[0].items.length * 1e6 : 0);
   cands.sort((a, b) => a.sheets.length - b.sheets.length || used(a) - used(b));
   return cands[0];
 }
@@ -754,14 +754,15 @@ function profBits(bits, w0, h0, k) {
 }
 // Lõi xếp chèn khe: units = [{ prof: [hình theo từng hướng xoay], qty, w, h }] (w, h tính bằng ô lưới).
 // Thử nhiều thứ tự / hướng xoay trong ms mili-giây, giữ cách cho khổ hẹp nhất. Trả về các tờ: items {u, k, x, y} (ô lưới).
+const LEN_W = 0.02; // trọng số chiều dài tờ so với bề ngang khi so các cách xếp
 async function greedyCore(units, Hc, Wc, fill, ms, onTick) {
-  // một lần xếp: order = thứ tự unit, rot[u] = chỉ dùng hướng xoay này (-1 = tự chọn), rule 0: trái nhất / 1: mép phải nhỏ nhất
+  // một lần xếp: order = thứ tự unit, rot[u] = -1 tự chọn, 0..3 một hướng, 4/5 cặp ngược đầu (0+180° / 90+270°); rule 0: trái nhất / 1: mép phải nhỏ nhất
+  const allowed = (pr, r) => { const q = r < 0 ? pr : pr.filter(P => r >= 4 ? P.k % 2 === r - 4 : P.k === r); return q.length ? q : pr; };
   const pack = (order, rot, rule) => {
     const newSheet = () => ({ cols: Array.from({ length: Wc }, () => []), cur: new Map(), items: [], wid: 0, hgt: 0 });
     const place = (sh, u) => {
       let best = null; const pr = units[u].prof;
-      for (const P of pr) {
-        if (rot[u] >= 0 && P.k !== rot[u] && pr.some(Q => Q.k === rot[u])) continue;
+      for (const P of allowed(pr, rot[u])) {
         const key = u * 4 + P.k, c = sh.cur.get(key) || { x: 0, y: 0 };
         const lim = !best ? Wc - P.w : rule ? Math.min(Wc - P.w, best.x + best.P.right - P.right) : Math.min(Wc - P.w, best.x);
         const r = findPos(sh.cols, P, c.x, c.y, Hc, lim);
@@ -782,7 +783,8 @@ async function greedyCore(units, Hc, Wc, fill, ms, onTick) {
     else for (const u of order) for (let c = 0; c < units[u].qty; c++) {
       if (!place(sheets[sheets.length - 1], u)) { sheets.push(newSheet()); place(sheets[sheets.length - 1], u); }
     }
-    const score = fill ? -sheets[0].items.length * 1e6 + sheets[0].wid : (sheets.length - 1) * 1e7 + sheets.reduce((t, s) => t + s.wid, 0);
+    const size = s => s.wid + LEN_W * s.hgt;
+    const score = fill ? -sheets[0].items.length * 1e6 + size(sheets[0]) : (sheets.length - 1) * 1e7 + sheets.reduce((t, s) => t + size(s), 0);
     return { sheets, score };
   };
   const U = units.length, ids = units.map((_, i) => i), none = ids.map(() => -1), canRot = units.some(u => u.prof.length > 1);
@@ -790,13 +792,14 @@ async function greedyCore(units, Hc, Wc, fill, ms, onTick) {
   let best = null;
   const tryIt = (order, rot, rule) => { const r = pack(order, rot, rule); if (!best || r.score < best.score) best = { ...r, order, rot, rule }; };
   for (const kf of keys) for (const rule of [0, 1]) tryIt(ids.slice().sort((a, b) => kf(units[b]) - kf(units[a])), none, rule);
+  if (canRot) for (const r of [4, 5]) for (const rule of [0, 1]) tryIt(best.order.slice(), ids.map(() => r), rule);
   const t0 = performance.now();
   let tick = t0, n = 0;
   while (performance.now() - t0 < ms && (U > 1 || canRot)) {
     const order = best.order.slice(), rot = best.rot.slice(); let rule = best.rule;
     const m = Math.random();
     if (m < 0.45 && U > 1) { const i = Math.random() * U | 0, j = Math.random() * U | 0; [order[i], order[j]] = [order[j], order[i]]; }
-    else if (m < 0.85 && canRot) { const i = Math.random() * U | 0; rot[i] = (Math.random() * 5 | 0) - 1; }
+    else if (m < 0.85 && canRot) { const i = Math.random() * U | 0; rot[i] = (Math.random() * 7 | 0) - 1; }
     else if (m < 0.95) { const i = Math.random() * U | 0, [x] = order.splice(i, 1); order.splice(Math.random() * U | 0, 0, x); }
     else rule = 1 - rule;
     tryIt(order, rot, rule); n++;
@@ -934,24 +937,26 @@ function finishSheet(G, p, items) {
     const e = p.dotE;
     sh.dots = [[e, e], [sh.W - e, e], [e, sh.H - e], [sh.W - e, sh.H - e]];
   }
-  if (hbcMarks) { const m = pluginMarks(cb); sh.marks = m.rects; sh.tri = m.tri; } else sh.marks = marksOf(sh, p);
+  if (hbcMarks) { const m = pluginMarks(cb, items); sh.marks = m.rects; sh.tri = m.tri; } else sh.marks = marksOf(sh, p);
   return sh;
 }
 // Dấu định vị y như plugin máy HBC tự thêm trong CorelDRAW (đo từ file mẫu "file corel mau.cdr", đối tượng LMarkLine2 + DIR):
-// nét K100 dày 1 mm; 4 chữ L có góc cách khung đường cắt 20 mm, mỗi nhánh dài 20 mm chạy tới đường kéo dài của khung;
-// 2 chữ T ở giữa chiều cao: nét dọc 40 mm trên đường dấu, nét ngang 20 mm vào tới khung; tam giác DIR ở giữa phía trên.
-const PLUGIN = { F: 20, T: 1, MID: 40, triBase: 18.75, triTip: 22.5, triHalf: 2.165 };
-function pluginMarks([x0, y0, x1, y1]) {
-  const F = PLUGIN.F, h = PLUGIN.T / 2, yc = (y0 + y1) / 2, xc = (x0 + x1) / 2, M = PLUGIN.MID / 2;
+// nét K100 dày 1 mm; 4 chữ L mỗi nhánh dài 20 mm; 2 chữ T ở giữa chiều cao: nét dọc 40 mm trên đường dấu, nét ngang vào tới khung;
+// tam giác DIR ở giữa phía trên. Plugin đặt góc dấu cách khung đường cắt 20 mm; theo yêu cầu người dùng app đặt 10 mm (F), giữ nguyên cỡ dấu.
+const PLUGIN = { F: 10, ARM: 20, T: 1, MID: 40, triBase: 8.75, triTip: 12.5, triHalf: 2.165 };
+function pluginMarks([x0, y0, x1, y1], items) {
+  const F = PLUGIN.F, A = PLUGIN.ARM - F, h = PLUGIN.T / 2, yc = (y0 + y1) / 2, xc = (x0 + x1) / 2, M = PLUGIN.MID / 2;
+  // nét ngang chữ T dừng trước phần hình 1 mm (chế độ cắt vào trong: hình rộng hơn đường cắt)
+  const tl = Math.min(x0, ...items.map(it => it.bb[0] - 1)), tr = Math.max(x1, ...items.map(it => it.bb[2] + 1));
   const rects = [
     // góc trên trái / trên phải / dưới trái / dưới phải: nhánh ngang + nhánh dọc (phủ cả ô góc như nối góc vuông)
-    [x0 - F - h, y0 - F - h, x0, y0 - F + h], [x0 - F - h, y0 - F - h, x0 - F + h, y0],
-    [x1, y0 - F - h, x1 + F + h, y0 - F + h], [x1 + F - h, y0 - F - h, x1 + F + h, y0],
-    [x0 - F - h, y1 + F - h, x0, y1 + F + h], [x0 - F - h, y1, x0 - F + h, y1 + F + h],
-    [x1, y1 + F - h, x1 + F + h, y1 + F + h], [x1 + F - h, y1, x1 + F + h, y1 + F + h],
+    [x0 - F - h, y0 - F - h, x0 + A, y0 - F + h], [x0 - F - h, y0 - F - h, x0 - F + h, y0 + A],
+    [x1 - A, y0 - F - h, x1 + F + h, y0 - F + h], [x1 + F - h, y0 - F - h, x1 + F + h, y0 + A],
+    [x0 - F - h, y1 + F - h, x0 + A, y1 + F + h], [x0 - F - h, y1 - A, x0 - F + h, y1 + F + h],
+    [x1 - A, y1 + F - h, x1 + F + h, y1 + F + h], [x1 + F - h, y1 - A, x1 + F + h, y1 + F + h],
     // chữ T giữa 2 cạnh bên
-    [x0 - F - h, yc - M, x0 - F + h, yc + M], [x0 - F, yc - h, x0, yc + h],
-    [x1 + F - h, yc - M, x1 + F + h, yc + M], [x1, yc - h, x1 + F, yc + h]];
+    [x0 - F - h, yc - M, x0 - F + h, yc + M], [x0 - F, yc - h, tl, yc + h],
+    [x1 + F - h, yc - M, x1 + F + h, yc + M], [tr, yc - h, x1 + F, yc + h]];
   const tri = [[xc, y0 - PLUGIN.triTip], [xc - PLUGIN.triHalf, y0 - PLUGIN.triBase], [xc + PLUGIN.triHalf, y0 - PLUGIN.triBase]];
   return { rects, tri };
 }
