@@ -148,6 +148,15 @@ td select{max-width:320px;padding:3px 5px}
 </section>
 
 <section id="tab-tk" hidden>
+  <form class="panel" id="tkLock" style="max-width:340px;display:flex;flex-direction:column;gap:10px">
+    <h2 style="margin:0">Thống kê có khóa</h2>
+    <label class="f">Mật khẩu thống kê
+      <input id="tkPw" type="password" autocomplete="off" required>
+    </label>
+    <button class="main" type="submit">Mở thống kê</button>
+    <div class="err" id="tkPwErr" role="alert"></div>
+  </form>
+  <div id="tkBody" hidden>
   <div class="panel">
     <div class="row end">
       <label class="f">Xem theo
@@ -157,6 +166,7 @@ td select{max-width:320px;padding:3px 5px}
       <label class="f">Đến ngày<input id="tkTo" type="date"></label>
       <button id="tkCsv" class="noprint">Xuất CSV</button>
       <button id="tkPrint" class="noprint">In bảng</button>
+      <button id="tkClose" class="noprint">Khóa lại</button>
     </div>
     <div class="cards" id="tkCards"></div>
     <p class="note">Mét khung mỗi tranh = (a + b) × 2 × 1,1, với a và b là hai chiều của tranh tính bằng mét.</p>
@@ -182,6 +192,12 @@ td select{max-width:320px;padding:3px 5px}
       <tbody id="tkHist"></tbody>
     </table></div>
   </div>
+  <div class="panel noprint">
+    <h2>Dữ liệu thống kê</h2>
+    <p class="note">Thống kê lưu trên máy này và trong file <b>thongke-in.json</b> ở thư mục lưu file cần in. Các máy cùng chọn một thư mục dùng chung (thư mục mạng) sẽ thấy chung số liệu.</p>
+    <div class="row"><button id="bkOut">Tải bản sao lưu</button><label class="btn"><input id="bkIn" type="file" accept=".json" hidden>Nạp bản sao lưu</label></div>
+  </div>
+  </div>
 </section>
 
 <section id="tab-cd" hidden>
@@ -192,11 +208,6 @@ td select{max-width:320px;padding:3px 5px}
       <label class="f">Cắt tối đa (% ảnh) khi khác tỉ lệ<input id="maxCrop" type="number" min="0" max="60" style="width:100px"></label>
     </div>
     <p class="note">Đổi cỡ không làm thay đổi điểm ảnh: app chỉ ghi lại kích thước in trong file, nên in to hơn thì số điểm ảnh trên mỗi inch giảm và app sẽ cảnh báo khi xuống dưới mức này. Khác tỉ lệ thì app cắt phần giữa; nếu phải cắt quá mức trên, đơn được chuyển sang “Cần xem lại” thay vì tự cắt.</p>
-  </div>
-  <div class="panel">
-    <h2>Dữ liệu thống kê</h2>
-    <p class="note">Thống kê lưu trên máy này và trong file <b>thongke-in.json</b> ở thư mục lưu file cần in. Các máy cùng chọn một thư mục dùng chung (thư mục mạng) sẽ thấy chung số liệu.</p>
-    <div class="row"><button id="bkOut">Tải bản sao lưu</button><label class="btn"><input id="bkIn" type="file" accept=".json" hidden>Nạp bản sao lưu</label></div>
   </div>
 </section>
 </div>
@@ -572,6 +583,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const S = { src: null, dst: null, index: {}, handles: new Map(), orders: [], records: [], filter: 'all', cfg: { minDpi: 100, maxCrop: 25 } };
 const PW = { salt: 'newhouse-layfilein-v1', hash: 'b77ea80da681b3c9d1f0366943dfae579bbdb2ecc63b718b9cdb688644ded6c6' };
+const PW_TK = { salt: 'newhouse-thongke-v1', hash: '96d2155416b804c83c50f374207f3d90c4502fe7c4f193b544d76b2ef5f976ba' };
 const STATS_FILE = 'thongke-in.json';
 const canPick = !!window.showDirectoryPicker;
 
@@ -585,9 +597,9 @@ const kvGet = async k => { const d = await dbp; return new Promise(ok => { const
 const kvSet = async (k, v) => { const d = await dbp; return new Promise(ok => { const t = d.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = ok; t.onerror = ok; }); };
 
 /* ---- đăng nhập ---- */
-async function hashPw(p) {
+async function hashPw(p, salt = PW.salt) {
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(p), 'PBKDF2', false, ['deriveBits']);
-  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: new TextEncoder().encode(PW.salt), iterations: 120000 }, key, 256);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: new TextEncoder().encode(salt), iterations: 120000 }, key, 256);
   return [...new Uint8Array(bits)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 $('loginForm').addEventListener('submit', async e => {
@@ -612,6 +624,15 @@ async function enter() {
   renderOrders(); renderStats();
 }
 try { if (sessionStorage.getItem('in') === '1') enter(); } catch (_) { }
+
+/* mở khóa thống kê chỉ giữ tới khi tải lại trang */
+const setTk = open => { $('tkLock').hidden = open; $('tkBody').hidden = !open; $('tkPw').value = ''; $('tkPwErr').textContent = ''; };
+$('tkLock').addEventListener('submit', async e => {
+  e.preventDefault();
+  if (await hashPw($('tkPw').value, PW_TK.salt) === PW_TK.hash) { setTk(true); renderStats(); }
+  else { $('tkPwErr').textContent = 'Sai mật khẩu.'; $('tkPw').select(); }
+});
+$('tkClose').addEventListener('click', () => setTk(false));
 
 /* ---- tab ---- */
 document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => {
