@@ -85,7 +85,12 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden}
 .bar>div{height:100%;width:0;background:var(--accent);transition:width .15s}
 #log{font-size:12px;min-height:18px}
-.files{max-height:120px;overflow:auto;font-family:var(--f-mono);font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:6px}
+.files{max-height:260px;overflow:auto;font-family:var(--f-mono);font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:6px}
+.frow{padding:5px 0;border-bottom:1px solid var(--line)} .frow:last-child{border-bottom:0}
+.fname{overflow-wrap:anywhere;color:var(--ink,inherit)}
+.fctl{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:3px}
+.fctl input{width:58px;min-width:0;padding:2px 4px;font:inherit;margin:0}
+.fctl button{padding:0 6px;font:inherit;width:auto}
 @media (prefers-reduced-motion:reduce){.bar>div{transition:none}}
 </style>
 
@@ -254,11 +259,37 @@ const setCount = p => S.folderQty || p.copies;
 function fileQty(f, p) { return (f.qty || 1) * setCount(p); }
 function showFiles() {
   const p = params();
-  $('fileList').textContent = S.files.length ? S.files.map(f => fileQty(f, p) + ' × ' + f.name + (setCount(p) > 1 ? '  (' + (f.qty || 1) + ' × ' + setCount(p) + ' lượt)' : '')
-    + (f.kt ? '  [' + (f.kt.dir === 'DOC' ? 'dọc ' : 'ngang ') + f.kt.mm / 10 + ' cm]' : '') + (f.hasSpot ? '  [Spot1 có sẵn]' : '')).join('\n') : 'Không có file PNG trong thư mục';
   $('copies').disabled = !!S.folderQty;
   $('copiesNote').textContent = (S.folderQty ? 'Tên thư mục có _SL' + S.folderQty + ': in ' + S.folderQty + ' lượt.' : 'Tên thư mục không có _SL: số lượt lấy ở ô trên.') + ' Mỗi lượt, file có _SL riêng in theo số của file, file khác in 1 bản.';
+  const box = $('fileList');
+  if (box.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return; // đang gõ: không dựng lại ô
+  box.textContent = S.files.length ? '' : 'Không có file PNG trong thư mục';
+  const mm = v => +v.toFixed(1), el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
+  S.files.forEach((f, i) => {
+    const w = f.w || f.pw / (f.dpi || p.srcDpi) * 25.4, h = f.h || w * f.ph / f.pw, eff = Math.round(f.pw / (w / 25.4)), row = el('div', 'frow'), ctl = el('div', 'fctl');
+    row.append(el('div', 'fname', f.name + (f.kt ? '  [' + (f.kt.dir === 'DOC' ? 'dọc ' : 'ngang ') + f.kt.mm / 10 + ' cm]' : '') + (f.hasSpot ? '  [Spot1 có sẵn]' : '')));
+    const inp = (k, v, tip) => { const e = el('input'); e.type = 'number'; e.min = 1; e.step = k === 'qty' ? 1 : 0.1; e.value = v; e.title = tip; e.dataset.i = i; e.dataset.k = k; return e; };
+    ctl.append('SL', inp('qty', f.qty || 1, 'Số bản của file này trong mỗi lượt'), setCount(p) > 1 ? '× ' + setCount(p) + ' lượt = ' + fileQty(f, p) : '', ' ', inp('w', mm(w), 'Rộng (mm), cao tự theo tỉ lệ hình'), '×', inp('h', mm(h), 'Cao (mm), rộng tự theo tỉ lệ hình'), 'mm');
+    if (f.ovW) { const b = el('button', '', '↺'); b.type = 'button'; b.title = 'Về kích thước gốc'; b.dataset.i = i; ctl.append(b); }
+    row.append(ctl);
+    if (eff < p.dpi) row.append(el('div', 'warn', 'Ảnh gốc chỉ đủ ' + eff + ' DPI ở cỡ này, in sẽ kém nét hơn ' + p.dpi + ' DPI.'));
+    box.append(row);
+  });
 }
+// sửa số lượng / kích thước từng file ngay trên app: chỉ đổi cách in, file gốc giữ nguyên, file in luôn lấy mẫu lại từ file gốc
+$('fileList').addEventListener('change', e => {
+  const t = e.target, f = S.files[+t.dataset.i], v = parseFloat(t.value), k = t.dataset.k;
+  if (!f || !k) return;
+  if (k === 'qty') { f.qty = Math.max(1, Math.round(v) || 1); recompute(false); return; }
+  if (!(v > 0)) { showFiles(); return; }
+  f.ovW = k === 'w' ? v : v * f.pw / f.ph;
+  recompute(true);
+});
+$('fileList').addEventListener('click', e => {
+  const b = e.target.closest('button'), f = b && S.files[+b.dataset.i];
+  if (f) { delete f.ovW; recompute(true); }
+});
+$('fileList').addEventListener('focusout', () => setTimeout(showFiles));
 /* ---------- đọc file TIF (kiểu Photoshop lưu): ảnh + kênh Spot1 có sẵn ---------- */
 const isTif = n => /\.tiff?$/i.test(n), isImg = n => /\.(png|tiff?)$/i.test(n);
 async function tiffTags(read) {
@@ -563,7 +594,8 @@ async function buildGeometry(p) {
   for (const f of S.files) {
     const dpi = f.dpi || p.srcDpi;
     f.w = f.pw / dpi * 25.4; f.h = f.ph / dpi * 25.4;
-    if (f.kt) { // tên file quy định: _KTDOC = chiều dọc, _KTNGANG = chiều ngang; cạnh kia theo tỉ lệ hình
+    if (f.ovW) { f.w = f.ovW; f.h = f.ovW * f.ph / f.pw; } // kích thước sửa trên app được ưu tiên nhất
+    else if (f.kt) { // tên file quy định: _KTDOC = chiều dọc, _KTNGANG = chiều ngang; cạnh kia theo tỉ lệ hình
       if (f.kt.dir === 'DOC') { f.h = f.kt.mm; f.w = f.kt.mm * f.pw / f.ph; } else { f.w = f.kt.mm; f.h = f.kt.mm * f.ph / f.pw; }
     } else if (p.forceW > 0) { f.h = f.h * p.forceW / f.w; f.w = p.forceW; }
   }
@@ -872,6 +904,7 @@ function planLattice(G, p, Hc, Wc) {
         if (x + C.Sh.w > Wc) break;
         cols.push({ x, C });
         x += B.n ? (c % 2 ? dBA : dAB) : stepX(A, A);
+        if (B.n && c > 0) x = Math.max(x, cols[c - 1].x + stepX(cols[c - 1].C, cols[c - 1].C)); // cột cách 1 cột cũng không được chạm nhau
       }
       const cap = cols.reduce((t, c) => t + c.C.n, 0); if (!cap) continue;
       const wOf = upto => { let acc = 0, wmax = 0; for (const c of cols) { acc += c.C.n; wmax = c.x + c.C.Sh.w; if (acc >= upto) break; } return wmax; };
@@ -1497,15 +1530,18 @@ function renderStats() {
 }
 
 /* ---------- điều phối ---------- */
-let timer = 0, geoKey = '';
+let timer = 0, geoKey = '', wantForce = false;
 function recompute(force) {
   clearTimeout(timer);
-  timer = setTimeout(() => run(force), 250);
+  wantForce = wantForce || !!force; // yêu cầu tính lại hình học không được mất khi có lần gọi sau đè lên
+  timer = setTimeout(() => { const f = wantForce; wantForce = false; run(f); }, 250);
 }
-async function run(force) {
+async function run(force, retried) {
   if (S.busy) { recompute(force); return; }
   if (!S.files.length) { S.plan = null; renderStats(); draw(); $('btnExport').disabled = true; return; }
   S.busy = true; $('btnExport').disabled = true;
+  const files = S.files;
+  let again = false;
   try {
     const p = params(), gk = [p.off, p.shape, p.join, p.tol, p.gap, p.srcDpi, p.forceW, S.files.length, S.files[0].name].join('|');
     if (force || gk !== geoKey || !S.geo) { S.geo = await buildGeometry(p); geoKey = gk; }
@@ -1522,10 +1558,17 @@ async function run(force) {
     else if (S.plan.sheets.length > 1) progress(0, 'Không đủ chỗ trên 1 tờ: cần ' + tot + ' tem, 1 tờ chỉ chứa ' + S.plan.cap + '. Đang chia ' + S.plan.sheets.length + ' tờ — giảm số lượng hoặc tăng khổ.', 'err');
     else progress(0, 'Đã xếp ' + tot + ' tem trên 1 tờ.', 'ok');
     const ol = S.plan ? S.plan.sheets.reduce((t, sh) => t + overlapMm2(sh), 0) : 0;
-    if (ol > 20) progress(0, 'CẢNH BÁO: có hình chồng lên nhau (khoảng ' + ol + ' mm²). Đừng in, báo lại để kiểm tra.', 'err');
-    $('btnExport').disabled = !S.plan; $('btnCorel').disabled = !S.plan;
+    const bad = ol > 20;
+    if (bad && !retried) again = true; // tính lại toàn bộ 1 lần trước khi báo lỗi
+    else if (bad) {
+      const d = S.files.map(f => f.name + ' ' + f.pw + '×' + f.ph + 'px ' + Math.round(f.dpi || p.srcDpi) + 'dpi ' + f.w.toFixed(1) + '×' + f.h.toFixed(1) + 'mm ô ' + f.gwc + '×' + f.ghc).slice(0, 3).join('; ');
+      progress(0, 'LỖI: hình hoặc đường cắt chồng nhau (khoảng ' + ol + ' mm²), đã khoá xuất file. Chụp dòng này gửi lại: ' + d + ' · lưới ' + S.geo.pres.toFixed(3), 'err');
+    }
+    $('btnExport').disabled = !S.plan || bad; $('btnCorel').disabled = !S.plan || bad;
   } catch (e) { console.error(e); progress(0, 'Lỗi: ' + e.message, 'err'); }
   S.busy = false;
+  if (S.files !== files) recompute(true); // đổi thư mục trong lúc đang xếp: kết quả vừa rồi là của bộ file cũ
+  else if (again) run(true, true);
 }
 function overlapMm2(sh) {
   const W = Math.ceil(sh.W), H = Math.ceil(sh.H), used = new Uint8Array(W * H), G = S.geo;
@@ -1533,12 +1576,24 @@ function overlapMm2(sh) {
   let bad = 0;
   for (const it of sh.items) {
     const f = S.files[it.fi], [a, b, c, d, e, g] = mat(f, it.k);
-    const x0 = Math.max(0, Math.floor(it.ix0)), y0 = Math.max(0, Math.floor(it.iy0)), w = Math.min(W, Math.ceil(it.ix1)) - x0, h = Math.min(H, Math.ceil(it.iy1)) - y0;
+    // khung tính theo kích thước ảnh hiện tại, không theo khung lúc xếp, để bắt được cả ảnh lệch cỡ so với lưới xếp
+    const cs = [[G.P, G.P], [G.P + f.w, G.P], [G.P, G.P + f.h], [G.P + f.w, G.P + f.h]].map(([u, v]) => rp(f, it.k, u, v)), xs = cs.map(q => q[0] + it.bx), ys = cs.map(q => q[1] + it.by);
+    const x0 = Math.max(0, Math.floor(Math.min(...xs))), y0 = Math.max(0, Math.floor(Math.min(...ys))), w = Math.min(W, Math.ceil(Math.max(...xs))) - x0, h = Math.min(H, Math.ceil(Math.max(...ys))) - y0;
     if (w <= 0 || h <= 0) continue;
     cx.setTransform(1, 0, 0, 1, 0, 0); cx.clearRect(x0, y0, w, h);
     cx.setTransform(a, b, c, d, e + it.bx, g + it.by); cx.drawImage(f.thumb, G.P, G.P, f.w, f.h);
     const px = cx.getImageData(x0, y0, w, h).data;
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (px[(y * w + x) * 4 + 3] >= 64) { const q = (y0 + y) * W + x0 + x; if (used[q]) bad++; used[q] = 1; }
+  }
+  // đường cắt của 2 hình cũng không được chồng nhau
+  used.fill(0);
+  for (const it of sh.items) {
+    const [x0, y0] = [Math.max(0, Math.floor(it.bb[0])), Math.max(0, Math.floor(it.bb[1]))], w = Math.min(W, Math.ceil(it.bb[2])) - x0, h = Math.min(H, Math.ceil(it.bb[3])) - y0;
+    if (w <= 0 || h <= 0 || !it.paths.length) continue;
+    cx.setTransform(1, 0, 0, 1, 0, 0); cx.clearRect(x0, y0, w, h);
+    cx.beginPath(); for (const L of it.paths) { L.forEach(([x, y], i) => i ? cx.lineTo(x, y) : cx.moveTo(x, y)); cx.closePath(); } cx.fill();
+    const px = cx.getImageData(x0, y0, w, h).data;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (px[(y * w + x) * 4 + 3] >= 200) { const q = (y0 + y) * W + x0 + x; if (used[q]) bad++; used[q] = 1; }
   }
   return bad;
 }
