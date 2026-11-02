@@ -735,12 +735,12 @@ async function planLayout(G, p) {
   p.Hbig = Wc * G.pres;
   // tem cùng cỡ: thử xếp lưới (so le, xoay xen kẽ); luôn thử thêm xếp chèn khe; lấy cách ít tờ nhất, rồi khổ hẹp nhất
   const perSet = S.files.reduce((t, f) => t + (f.qty || 1), 0);
-  if (p.group && perSet > 1 && (p.fill || setCount(p) > 1)) { const g = await planGroups(G, p, Hc, Wc); if (g) return g; }
-  const cands = [G.same ? planLattice(G, p, Hc, Wc) : null, await planGreedy(G, p, Hc, Wc)].filter(Boolean);
+  const fits = c => c.sheets.every(s => s.W <= p.maxW + 0.5 && s.H <= p.maxH + 0.5); // không vượt khổ cho phép
+  if (p.group && perSet > 1 && (p.fill || setCount(p) > 1)) { const g = await planGroups(G, p, Hc, Wc); if (g && fits(g)) return g; }
+  const cands = [G.same ? planLattice(G, p, Hc, Wc) : null, G.same ? await planLattice2(G, p, Hc, Wc) : null, await planGreedy(G, p, Hc, Wc)].filter(Boolean);
   if (!cands.length) return null;
-  const used = c => c.sheets.reduce((t, s) => t + (p.horiz ? s.H + LEN_W * s.W : s.W + LEN_W * s.H), 0) - (p.fill ? c.sheets[0].items.length * 1e6 : 0);
-  cands.sort((a, b) => a.sheets.length - b.sheets.length || used(a) - used(b));
-  return cands[0];
+  const ok = cands.filter(fits);
+  return (ok.length ? ok : cands).sort(planOrder(p))[0];
 }
 // hình dạng thật theo từng cột: các đoạn [đầu, cuối] liên tiếp, để hình khác lọt được vào chỗ lõm
 function profOf(f, k) {
@@ -827,17 +827,21 @@ async function greedyCore(units, Hc, Wc, fill, ms, onTick) {
   const tryIt = (order, rot, rule) => { const r = pack(order, rot, rule); if (!best || r.score < best.score) best = { ...r, order, rot, rule }; };
   for (const kf of keys) for (const rule of [0, 1]) tryIt(ids.slice().sort((a, b) => kf(units[b]) - kf(units[a])), none, rule);
   if (canRot) for (const r of [4, 5]) for (const rule of [0, 1]) tryIt(best.order.slice(), ids.map(() => r), rule);
+  // cùng dữ liệu phải ra cùng kết quả: số ngẫu nhiên có hạt cố định, số lần thử tính theo khối lượng việc chứ không theo đồng hồ
+  let seed = 20240607;
+  const rnd = () => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const load = units.reduce((t, u) => t + (u.qty || 1) * u.w, 0) || 1, iters = Math.ceil(ms * 3000 / load);
   const t0 = performance.now();
   let tick = t0, n = 0;
-  while (performance.now() - t0 < ms && (U > 1 || canRot)) {
+  while (n < iters && performance.now() - t0 < ms * 4 && (U > 1 || canRot)) {
     const order = best.order.slice(), rot = best.rot.slice(); let rule = best.rule;
-    const m = Math.random();
-    if (m < 0.45 && U > 1) { const i = Math.random() * U | 0, j = Math.random() * U | 0; [order[i], order[j]] = [order[j], order[i]]; }
-    else if (m < 0.85 && canRot) { const i = Math.random() * U | 0; rot[i] = (Math.random() * 7 | 0) - 1; }
-    else if (m < 0.95) { const i = Math.random() * U | 0, [x] = order.splice(i, 1); order.splice(Math.random() * U | 0, 0, x); }
+    const m = rnd();
+    if (m < 0.45 && U > 1) { const i = rnd() * U | 0, j = rnd() * U | 0; [order[i], order[j]] = [order[j], order[i]]; }
+    else if (m < 0.85 && canRot) { const i = rnd() * U | 0; rot[i] = (rnd() * 7 | 0) - 1; }
+    else if (m < 0.95) { const i = rnd() * U | 0, [x] = order.splice(i, 1); order.splice(rnd() * U | 0, 0, x); }
     else rule = 1 - rule;
     tryIt(order, rot, rule); n++;
-    if (performance.now() - tick > 120) { tick = performance.now(); if (onTick) onTick(Math.min(1, (tick - t0) / ms), n, best); await sleep(); }
+    if (performance.now() - tick > 120) { tick = performance.now(); if (onTick) onTick(Math.min(1, n / iters), n, best); await sleep(); }
   }
   return best;
 }
@@ -880,12 +884,176 @@ async function planGroups(G, p, Hc, Wc) {
   // 3) đặt các khối lên tờ
   const r = await greedyCore([blk], Hc, Wc, p.fill, budget * 0.6, (v, n) => progress(v, 'Đang xếp các lượt… đã thử ' + n + ' cách'));
   // 4) tách khối thành từng hình: xoay ô của từng hình theo hướng khối (cùng quy ước với rotBits)
-  const expand = s => s.items.flatMap((bk, grp) => one.sh.items.map(it => {
+  const expand = s => s.flatMap((bk, grp) => one.sh.items.map(it => {
     const f = S.files[it.u], cw = it.k % 2 ? f.ghc : f.gwc, ch = it.k % 2 ? f.gwc : f.ghc, K = bk.k;
     const [x, y] = K === 0 ? [it.x, it.y] : K === 1 ? [CH - (it.y + ch), it.x] : K === 2 ? [CW - (it.x + cw), CH - (it.y + ch)] : [it.y, CW - (it.x + cw)];
     return { fi: it.u, k: (it.k + K) % 4, bx: (bk.x + x) * G.pres, by: (bk.y + y) * G.pres, grp };
   }));
-  return { sheets: r.sheets.map(s => fin(G, p, expand(s))), cap: r.sheets[0].items.length * one.sh.items.length, grouped: true };
+  const mk = list => ({ sheets: list.map(s => fin(G, p, expand(s))), cap: list[0].length * one.sh.items.length, grouped: true });
+  const cands = [mk(r.sheets.map(s => s.items))];
+  // 5) phân tích thêm mọi kiểu lưới của khối
+  const L = await latticeSearch(bits, CW, CH, p.rot ? [0, 1, 2, 3] : [0], sets, p.fill, Hc, Wc);
+  if (L) cands.push(mk(L.sheets));
+  cands.sort(planOrder(p));
+  return cands[0];
+}
+// so 2 cách xếp: nhiều hình nhất (chế độ lấp đầy) → ít tờ nhất → tờ ngắn nhất theo chiều cấp liệu → diện tích nhỏ nhất
+const planOrder = p => (a, b) => {
+  const cnt = c => c.sheets.reduce((t, s) => t + s.items.length, 0), len = c => c.sheets.reduce((t, s) => t + (p.horiz ? s.H : s.W), 0), area = c => c.sheets.reduce((t, s) => t + s.W * s.H, 0);
+  return (p.fill ? cnt(b) - cnt(a) : 0) || a.sheets.length - b.sheets.length || len(a) - len(b) || area(a) - area(b);
+};
+/* ---------- phân tích mọi kiểu lưới ----------
+   Một "đơn vị" là 1 hình (mỗi hướng xoay) hoặc 1 cặp hình (mỗi cặp hướng, mỗi vị trí khớp nhau tốt nhất).
+   nfp cho biết chính xác đơn vị B đặt lệch (dx, dy) so với A có chạm A không; từ đó duyệt các cặp véc-tơ lưới
+   khít nhất, thử nhiều điểm gốc trên tờ, rồi lấp nốt khe còn trống. Không dùng số ngẫu nhiên. */
+function nfp(A, B) {
+  const x0 = -(B.w - 1), n = A.w + B.w - 1, F = new Array(n), H = A.h + B.h + 2, off = B.h, d = new Int32Array(H);
+  for (let i = 0; i < n; i++) {
+    const dx = x0 + i, m = [];
+    d.fill(0);
+    for (let cb = Math.max(0, -dx); cb < B.w && cb + dx < A.w; cb++) {
+      const Ra = A.runs[cb + dx], Rb = B.runs[cb];
+      for (let j = 0; j < Ra.length; j += 2) for (let k = 0; k < Rb.length; k += 2) { d[Ra[j] - Rb[k + 1] + off]++; d[Ra[j + 1] - Rb[k] + off + 1]--; }
+    }
+    for (let y = 0, c = 0, s = 0; y < H; y++) { const was = c; c += d[y]; if (!was && c) s = y; else if (was && !c) m.push(s - off, y - 1 - off); }
+    F[i] = m;
+  }
+  return { x0, F };
+}
+function nfpFree(N, dx, dy) {
+  const R = N.F[dx - N.x0];
+  if (!R) return true;
+  for (let j = 0; j < R.length; j += 2) if (dy >= R[j] && dy <= R[j + 1]) return false;
+  return true;
+}
+function touchVecs(N, maxN) { // các vị trí vừa chạm, thưa bớt theo dx
+  const st = Math.max(1, Math.ceil(N.F.length / maxN)), T = [];
+  for (let i = N.F.length % st; i < N.F.length; i += st) { const R = N.F[i]; for (let j = 0; j < R.length; j += 2) T.push([N.x0 + i, R[j + 1] + 1], [N.x0 + i, R[j] - 1]); }
+  return T;
+}
+function latticeVecs(U, N, keep) {
+  const T = touchVecs(N, 50).filter(v => v[1] > 0 || (v[1] === 0 && v[0] > 0));
+  T.push([N.x0 + N.F.length, 0], [0, U.h]);
+  const pairs = [];
+  for (const a of T) for (const b of T) { const d = a[0] * b[1] - a[1] * b[0]; if (d > 0) pairs.push([d, a, b]); }
+  pairs.sort((p, q) => p[0] - q[0]);
+  // kiểm tra từ tổ hợp gần trước để loại nhanh; lưới đối xứng nên chỉ cần nửa mặt phẳng
+  const ok = ([d, a, b]) => { for (const [i, j] of LAT_OFF) if (!nfpFree(N, i * a[0] + j * b[0], i * a[1] + j * b[1])) return false; return true; };
+  const out = [];
+  for (let i = 0, tried = 0; i < pairs.length && out.length < keep && tried < 1500; i++, tried++) if (ok(pairs[i])) out.push(pairs[i]);
+  return out;
+}
+const LAT_OFF = []; for (let i = -6; i <= 6; i++) for (let j = 0; j <= 6; j++) if (j > 0 || i > 0) LAT_OFF.push([i, j]);
+LAT_OFF.sort((p, q) => Math.abs(p[0]) + p[1] - Math.abs(q[0]) - q[1]);
+function latticePts(U, a, b, ox, oy, Hc, Wc) {
+  const d = a[0] * b[1] - a[1] * b[0], W = Wc - U.w, H = Hc - U.h, pts = [];
+  if (W < 0 || H < 0) return pts;
+  let i0 = 1e9, i1 = -1e9, j0 = 1e9, j1 = -1e9;
+  for (const [x, y] of [[0, 0], [W, 0], [0, H], [W, H]]) {
+    const X = x - ox, Y = y - oy, i = (X * b[1] - Y * b[0]) / d, j = (a[0] * Y - a[1] * X) / d;
+    i0 = Math.min(i0, i); i1 = Math.max(i1, i); j0 = Math.min(j0, j); j1 = Math.max(j1, j);
+  }
+  for (let i = Math.floor(i0); i <= Math.ceil(i1); i++) for (let j = Math.floor(j0); j <= Math.ceil(j1); j++) {
+    const x = Math.round(ox + i * a[0] + j * b[0]), y = Math.round(oy + i * a[1] + j * b[1]);
+    if (x >= 0 && x <= W && y >= 0 && y <= H) pts.push([x, y]);
+  }
+  return pts;
+}
+// lấp khe: đặt thêm hình vào các chỗ còn trống của tờ, mỗi lần chọn chỗ trái nhất
+function gapFill(pl, profs, Hc, Wc, limit) {
+  const cols = Array.from({ length: Wc }, () => []), by = new Map(profs.map(P => [P.k, P]));
+  const put = (P, x, y) => { for (let c = 0; c < P.w; c++) { const R = P.runs[c]; for (let j = 0; j < R.length; j += 2) cols[x + c].push(y + R[j], y + R[j + 1]); } };
+  for (const it of pl) put(by.get(it.k), it.x, it.y);
+  const out = pl.slice();
+  while (out.length < limit) {
+    let best = null;
+    for (const P of profs) { const r = findPos(cols, P, 0, 0, Hc, Wc - P.w); if (r.ok && (!best || r.x + P.right < best.x + best.P.right)) best = { ...r, P }; }
+    if (!best) break;
+    put(best.P, best.x, best.y); out.push({ k: best.P.k, x: best.x, y: best.y });
+  }
+  return out;
+}
+// N = 0: lấp đầy 1 tờ. Trả về { sheets: [[{ k, x, y }]], cases } (ô lưới)
+async function latticeSearch(bits, w0, h0, ks, N, fill, Hc, Wc) {
+  const MAXC = 360, big = Math.max(w0, h0);
+  if (big > MAXC) { // đơn vị rất lớn: phân tích trên lưới thô (phủ kín, không thể chồng), rồi đổi về ô lưới thật
+    const ds = Math.ceil(big / MAXC), W = Math.ceil(w0 / ds), H = Math.ceil(h0 / ds), b = new Uint8Array(W * H);
+    for (let y = 0; y < h0; y++) for (let x = 0; x < w0; x++) if (bits[y * w0 + x]) b[((y / ds) | 0) * W + ((x / ds) | 0)] = 1;
+    const L = await latticeSearch(b, W, H, ks, N, fill, Math.floor(Hc / ds), Math.floor(Wc / ds));
+    if (!L) return null;
+    const pw = W * ds - w0, ph = H * ds - h0; // phần đệm cho tròn lưới thô đổi phía khi xoay
+    const fix = it => ({ k: it.k, x: it.x * ds + (it.k === 1 ? ph : it.k === 2 ? pw : 0), y: it.y * ds + (it.k === 2 ? ph : it.k === 3 ? pw : 0) });
+    return { sheets: L.sheets.map(s => s.map(fix)), cases: L.cases };
+  }
+  const prof = {}; for (const k of ks) prof[k] = profBits(bits, w0, h0, k);
+  const profs = ks.map(k => prof[k]).filter(P => P.w <= Wc && P.h <= Hc);
+  if (!profs.length) return null;
+  const units = [];
+  const unitOf = parts => {
+    const W = Math.max(...parts.map(q => q.x + prof[q.k].w)), H = Math.max(...parts.map(q => q.y + prof[q.k].h)), b = new Uint8Array(W * H);
+    for (const q of parts) { const P = prof[q.k]; for (let c = 0; c < P.w; c++) { const R = P.runs[c]; for (let j = 0; j < R.length; j += 2) for (let y = R[j]; y <= R[j + 1]; y++) b[(q.y + y) * W + q.x + c] = 1; } }
+    const P = profBits(b, W, H, 0);
+    return { ...P, parts, n: parts.length };
+  };
+  for (const P of profs) units.push(unitOf([{ k: P.k, x: 0, y: 0 }]));
+  // cặp 2 hình: mọi cặp hướng xoay, giữ các vị trí khớp gọn nhất
+  for (let i = 0; i < profs.length; i++) for (let j = i; j < profs.length; j++) {
+    const A = profs[i], B = profs[j], T = touchVecs(nfp(A, B), 60);
+    const seen = T.map(([dx, dy]) => { const x0 = Math.min(0, dx), y0 = Math.min(0, dy); return { dx, dy, a: (Math.max(A.w, dx + B.w) - x0) * (Math.max(A.h, dy + B.h) - y0) }; }).sort((p, q) => p.a - q.a || p.dx - q.dx || p.dy - q.dy).slice(0, 8);
+    for (const s of seen) { const x0 = Math.min(0, s.dx), y0 = Math.min(0, s.dy); units.push(unitOf([{ k: A.k, x: -x0, y: -y0 }, { k: B.k, x: s.dx - x0, y: s.dy - y0 }])); }
+  }
+  const tops = []; let cases = 0, done = 0, tick = performance.now();
+  const FR = [0, 0.13, 0.27, 0.4, 0.53, 0.67, 0.8, 0.93], lats = [];
+  // bước 1: mọi đơn vị → các lưới khít nhất, xếp hạng theo diện tích mỗi hình
+  for (const U of units) {
+    if (U.w > Wc || U.h > Hc) continue;
+    done++; if (performance.now() - tick > 120) { tick = performance.now(); progress(0.3 + 0.4 * done / units.length, 'Đang phân tích các kiểu xếp… ' + cases + ' cách'); await sleep(); }
+    for (const [d, a, b] of latticeVecs(U, nfp(U, U), 6)) { lats.push({ U, a, b, dens: d / U.n }); cases++; }
+  }
+  lats.sort((p, q) => p.dens - q.dens);
+  // bước 2: 24 lưới khít nhất, đặt lên tờ với nhiều điểm gốc
+  done = 0;
+  for (const { U, a, b } of lats.slice(0, 24)) {
+    done++; if (performance.now() - tick > 120) { tick = performance.now(); progress(0.7 + 0.25 * done / 24, 'Đang thử đặt lên tờ… đã phân tích ' + cases + ' cách'); await sleep(); }
+    const pt = U.parts.length;
+    for (const fa of FR) for (const fb of FR) {
+      const pts = latticePts(U, a, b, fa * a[0] + fb * b[0], fa * a[1] + fb * b[1], Hc, Wc); cases++;
+      if (!pts.length) continue;
+      const x0 = Math.min(...pts.map(q => q[0])), y0 = Math.min(...pts.map(q => q[1]));
+      pts.sort((q, r) => q[0] - r[0] || q[1] - r[1]);
+      const cap = pts.length * pt, widAt = c => pts[Math.min(pts.length, Math.ceil(c / pt)) - 1][0] - x0 + U.w;
+      let score;
+      if (fill) score = -cap * 1e6 + widAt(cap);
+      else { const sh = Math.ceil(N / cap), rem = N - (sh - 1) * cap; score = (sh - 1) * 1e6 + (sh - 1) * widAt(cap) + widAt(rem); }
+      tops.push({ score, U, pts, x0, y0 });
+      if (tops.length > 40) { tops.sort((p, q) => p.score - q.score); tops.length = 12; }
+    }
+  }
+  if (!tops.length) return null;
+  tops.sort((p, q) => p.score - q.score);
+  // lấp khe cho vài cách tốt nhất rồi mới chốt
+  let best = null;
+  for (const t of tops.slice(0, 6)) {
+    const pl = t.pts.flatMap(([x, y]) => t.U.parts.map(q => ({ k: q.k, x: x - t.x0 + q.x, y: y - t.y0 + q.y })));
+    const full = fill || pl.length < N ? gapFill(pl, profs, Hc, Wc, fill ? 1e9 : Math.max(N, pl.length)) : pl;
+    const right = it => it.x + prof[it.k].right + 1, c = full.length;
+    full.sort((p, q) => right(p) - right(q) || p.y - q.y);
+    const sh = fill ? 1 : Math.ceil(N / c), rem = fill ? c : N - (sh - 1) * c, wid = right(full[Math.min(c, rem) - 1]);
+    const s = (fill ? -c * 1e6 : (sh - 1) * 1e6) + (sh - 1) * right(full[c - 1]) + wid;
+    if (!best || s < best.s) best = { s, full };
+  }
+  const { full } = best, sheets = [];
+  if (fill) sheets.push(full);
+  else for (let i = 0; i < N; i += full.length) sheets.push(full.slice(0, Math.min(full.length, N - i)));
+  return { sheets, cases };
+}
+async function planLattice2(G, p, Hc, Wc) {
+  const N = S.files.reduce((t, f) => t + fileQty(f, p), 0);
+  const L = await latticeSearch(G.occ, G.gwc, G.ghc, p.rot ? [0, 1, 2, 3] : [p.k0], N, p.fill, Hc, Wc);
+  if (!L) return null;
+  const order = []; S.files.forEach((f, fi) => { for (let c = 0, q = fileQty(f, p); c < q; c++) order.push(fi); });
+  let n = 0;
+  return { sheets: L.sheets.map(s => fin(G, p, s.map(it => ({ fi: p.fill ? n++ % S.files.length : order[n++], k: it.k, bx: it.x * G.pres, by: it.y * G.pres })))), cap: L.sheets[0].length, cases: L.cases };
 }
 function planLattice(G, p, Hc, Wc) {
   const sh = [0, 1, 2, 3].map(k => shapeOf(G, k));
@@ -916,8 +1084,13 @@ function planLattice(G, p, Hc, Wc) {
   }
   if (!best) return null;
   // sinh danh sách vị trí, chia tờ
-  const slots = [];
+  let slots = [];
   best.cols.forEach((c, ci) => { for (let i = 0; i < c.C.n; i++) slots.push({ col: ci, k: c.C.Sh.k, bx: c.x * G.pres, by: (c.C.s + i * c.C.Sh.dy) * G.pres }); });
+  if (p.fill || slots.length < N) { // lấp nốt khe còn trống ở mép tờ
+    const profs = (p.rot ? [0, 1, 2, 3] : [p.k0]).map(k => profBits(G.occ, G.gwc, G.ghc, k)).filter(P => P.w <= Wc && P.h <= Hc);
+    slots = gapFill(slots.map(s => ({ k: s.k, x: Math.round(s.bx / G.pres), y: Math.round(s.by / G.pres) })), profs, Hc, Wc, p.fill ? 1e9 : N).map(s => ({ k: s.k, bx: s.x * G.pres, by: s.y * G.pres }));
+    best.cap = slots.length;
+  }
   const order = [];
   if (p.fill) for (let i = 0; i < best.cap; i++) order.push(i % S.files.length);
   else S.files.forEach((f, fi) => { for (let c = 0, q = fileQty(f, p); c < q; c++) order.push(fi); });
