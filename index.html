@@ -556,6 +556,8 @@ $('machine').addEventListener('change', () => {
   $('optHbc').hidden = m === 'tranh'; $('optTranh').hidden = m !== 'tranh'; $('spotBox').hidden = m === 'tranh'; $('corelBox').hidden = m === 'tranh';
 });
 
+// độ đục (0-255) từ đó điểm ảnh được tính là phần hình: 70% (người dùng chọn); vùng mờ hơn không tính vào đường cắt và kênh Spot1
+const ALPHA_MIN = 179;
 async function buildGeometry(p) {
   // kích thước thật (mm) của từng file
   for (const f of S.files) {
@@ -583,7 +585,7 @@ async function buildGeometry(p) {
     f.thumb = bmp;
     cx.clearRect(0, 0, gw, gh); cx.drawImage(bmp, P / r, P / r, f.w / r, f.h / r);
     const px = cx.getImageData(0, 0, gw, gh).data, N = gw * gh, m = new Uint8Array(N);
-    for (let k = 0; k < N; k++) m[k] = px[k * 4 + 3] >= 128 ? 1 : 0;
+    for (let k = 0; k < N; k++) m[k] = px[k * 4 + 3] >= ALPHA_MIN ? 1 : 0;
     const key = fnv(m) + ':' + bw + 'x' + bh;
     if (cache.has(key)) { Object.assign(f, cache.get(key)); continue; }
     // lấp lỗ bên trong: chỉ nền nối ra mép mới là ngoài
@@ -1348,7 +1350,7 @@ async function buildTIF(sh, p, onp) {
     let px = cx.getImageData(0, 0, W, EH).data, fill = null, sd = null;
     if (spot) {
       const src = mcx ? mcx.getImageData(0, 0, W, EH).data : px, M = new Uint8Array(W * EH);
-      for (let k = 0; k < M.length; k++) M[k] = src[k * 4 + 3] >= 128 ? 1 : 0;
+      for (let k = 0; k < M.length; k++) M[k] = src[k * 4 + 3] >= ALPHA_MIN ? 1 : 0;
       fill = shrinkKeepThin(M, W, EH, R);
       if (scx) sd = scx.getImageData(0, 0, W, EH).data; // kênh có sẵn: alpha = lượng mực
     }
@@ -1519,9 +1521,26 @@ async function run(force) {
     if (!S.plan) progress(0, 'Tem lớn hơn khổ cho phép.', 'err');
     else if (S.plan.sheets.length > 1) progress(0, 'Không đủ chỗ trên 1 tờ: cần ' + tot + ' tem, 1 tờ chỉ chứa ' + S.plan.cap + '. Đang chia ' + S.plan.sheets.length + ' tờ — giảm số lượng hoặc tăng khổ.', 'err');
     else progress(0, 'Đã xếp ' + tot + ' tem trên 1 tờ.', 'ok');
+    const ol = S.plan ? S.plan.sheets.reduce((t, sh) => t + overlapMm2(sh), 0) : 0;
+    if (ol > 20) progress(0, 'CẢNH BÁO: có hình chồng lên nhau (khoảng ' + ol + ' mm²). Đừng in, báo lại để kiểm tra.', 'err');
     $('btnExport').disabled = !S.plan; $('btnCorel').disabled = !S.plan;
   } catch (e) { console.error(e); progress(0, 'Lỗi: ' + e.message, 'err'); }
   S.busy = false;
+}
+function overlapMm2(sh) {
+  const W = Math.ceil(sh.W), H = Math.ceil(sh.H), used = new Uint8Array(W * H), G = S.geo;
+  const cx = new OffscreenCanvas(W, H).getContext('2d', { willReadFrequently: true });
+  let bad = 0;
+  for (const it of sh.items) {
+    const f = S.files[it.fi], [a, b, c, d, e, g] = mat(f, it.k);
+    const x0 = Math.max(0, Math.floor(it.ix0)), y0 = Math.max(0, Math.floor(it.iy0)), w = Math.min(W, Math.ceil(it.ix1)) - x0, h = Math.min(H, Math.ceil(it.iy1)) - y0;
+    if (w <= 0 || h <= 0) continue;
+    cx.setTransform(1, 0, 0, 1, 0, 0); cx.clearRect(x0, y0, w, h);
+    cx.setTransform(a, b, c, d, e + it.bx, g + it.by); cx.drawImage(f.thumb, G.P, G.P, f.w, f.h);
+    const px = cx.getImageData(x0, y0, w, h).data;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (px[(y * w + x) * 4 + 3] >= 64) { const q = (y0 + y) * W + x0 + x; if (used[q]) bad++; used[q] = 1; }
+  }
+  return bad;
 }
 function progress(v, msg, cls) { $('prog').style.width = (v * 100).toFixed(1) + '%'; if (msg != null) log(msg, cls); }
 function log(m, cls) { const l = $('log'); l.textContent = m; l.className = 'note ' + (cls || ''); }
