@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="vi">
 <head>
 <meta charset="utf-8">
@@ -112,7 +112,7 @@ tr.late>td:first-child{box-shadow:inset 4px 0 0 var(--err)}
 <div id="app" hidden>
 <header>
   <h1>Lấy file <span>in tranh</span></h1>
-  <span class="note" title="Không thấy tính năng mới thì bấm Ctrl + F5">Bản 04/11/2026 · 2</span>
+  <span class="note" title="Không thấy tính năng mới thì bấm Ctrl + F5">Bản 04/11/2026 · 3</span>
   <nav role="tablist">
     <button role="tab" data-tab="don" aria-selected="true">Đơn hàng</button>
     <button role="tab" data-tab="dl" aria-selected="false">Đơn lẻ <span class="tag err" id="dlBadge" hidden></span></button>
@@ -395,7 +395,7 @@ tr.late>td:first-child{box-shadow:inset 4px 0 0 var(--err)}
       <label class="f">Tên máy (tự đặt)<input id="cfgLabel" placeholder="Ví dụ thietke-03" size="20"></label>
       <label class="f">Đường dẫn đầy đủ của thư mục lấy file trên máy này<input id="cfgBase" placeholder="E:\Giang\Mau tranh" size="32"></label>
     </div>
-    <label class="note" style="display:block;margin-top:6px"><input type="checkbox" id="cfgKhoThumb"> Khi mẫu chưa có ảnh nhập, tự tạo ảnh xem trước từ file trong kho (chậm với file nặng)</label>
+    <label class="note" style="display:block;margin-top:6px"><input type="checkbox" id="cfgKhoThumb"> Khi mẫu chưa có ảnh nhập, tự tạo ảnh xem trước nhỏ từ file trong kho (bật sẵn; ảnh tạo xong được nhớ trên máy này)</label>
     <p class="note">Trình duyệt không cho biết vị trí thật của thư mục, nên điền đường dẫn này để phân loại “chỉ ghi đường dẫn” hiện ra đường dẫn đầy đủ, dán được vào Explorer.</p>
     <p class="note">ID do app tạo và gắn với trình duyệt trên máy này. Xóa dữ liệu trình duyệt hoặc đổi trình duyệt sẽ ra ID mới; khi đó bạn chỉ cần gán tên người cho ID mới.</p>
   </div>
@@ -918,7 +918,7 @@ if (typeof module !== 'undefined') module.exports = Core;
 /* Phần giao diện */
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const S = { src: null, dst: null, index: {}, handles: new Map(), orders: [], records: [], filter: 'all', cfg: { minDpi: 100, maxCrop: 25 },
+const S = { src: null, dst: null, index: {}, handles: new Map(), orders: [], records: [], filter: 'all', cfg: { minDpi: 100, maxCrop: 25, khoThumb: true },
   machine: '', mine: { label: '', missing: [], confirms: [], names: {} }, shared: Core.mergeShared([]),
   cat: null, admin: false, leSeen: new Set(), le: [], labels: new Map(), openGroups: new Set(), imgKeys: new Set(), imgRemote: new Map() };
 const normCat = c => ({ t: 0, list: [], common: 'Chưa phân loại', products: {}, folders: {}, listings: {}, lfolders: {}, known: {}, saveDirs: {}, designDir: 'Thiet ke don le', ...(c || {}) });
@@ -1662,12 +1662,17 @@ function renderProducts() {
 /* ---- ảnh xem trước: lấy từ file trong kho, tải dần khi cuộn tới, nhớ lại để không đọc lại ---- */
 const thumbCache = new Map(), thumbQueue = [];
 let thumbBusy = 0;
-const previewRel = o => { const m = o.match; return m ? ((m.files[0] || m.candidates[0] || {}).rel || '') : ''; };
+/* ảnh từ kho chỉ lấy file đã khớp đúng mẫu; đơn không tìm thấy file thì không lấy ảnh file “gần giống” để khỏi hiện sai hình */
+const previewRel = o => {
+  const m = o.match; if (!m || m.status === 'missing') return '';
+  const f = m.files[0] || (m.candidates.length && m.candidates.every(c => c.code === o.code && (!o.variant || c.variant === o.variant)) ? m.candidates[0] : null);
+  return f ? f.rel : '';
+};
 function itemRel(k, product) {
   if (!Object.keys(S.index).length && !(S.index.all || []).length) return '';
   const o = { ...Core.parseVariation({ variation: k }), variation: k, product, size: null, pieces: 1 };
   const m = Core.matchOrder(o, S.index, folderFor(o));
-  return (m.files[0] || m.candidates[0] || {}).rel || '';
+  return m.status === 'missing' ? '' : (m.files[0] || m.candidates[0] || {}).rel || '';
 }
 const thumbTag = (rel, label) => rel
   ? `<img class="thumb" data-th="${esc(rel)}" alt="Ảnh ${esc(label)}" title="${esc(rel)}">`
@@ -1782,9 +1787,19 @@ $('imgBulk').addEventListener('change', async e => {
   $('catInfo').textContent = `Đã nhập ${n}/${files.length} ảnh` + (S.dst ? '' : ' (tạm lưu trên máy này, chọn thư mục lưu file cần in để các máy khác cùng thấy)') + '.';
   refreshImgs();
 });
+/* ảnh xem trước từ kho: độ phân giải thấp, vừa đủ nhận ra hình; nhớ trong IndexedDB theo file + cỡ + ngày sửa để lần sau khỏi đọc lại file nặng */
+const THUMB_SMALL = 120, THUMB_BIG = 480;
 async function makeThumb(rel, max) {
   const h = S.handles.get(rel); if (!h) return null;
   const file = await h.getFile(), ext = rel.split('.').pop().toLowerCase();
+  const ck = `th:${rel}|${max}|${file.size}|${file.lastModified}`, cached = await kvGet(ck);
+  if (cached) return URL.createObjectURL(cached);
+  const blob = await renderThumb(file, ext, max);
+  if (!blob) return null;
+  kvSet(ck, blob);
+  return URL.createObjectURL(blob);
+}
+async function renderThumb(file, ext, max) {
   let canvas;
   if (ext === 'tif' || ext === 'tiff') {
     const t = await Core.tiffThumb(file, await Core.tiffInfo(file), max); if (!t) return null;
@@ -1794,9 +1809,9 @@ async function makeThumb(rel, max) {
     canvas = new OffscreenCanvas(Math.max(1, Math.round(b.width * r)), Math.max(1, Math.round(b.height * r)));
     canvas.getContext('2d').drawImage(b, 0, 0, canvas.width, canvas.height); b.close();
   } else return null;
-  return URL.createObjectURL(await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.85 }));
+  return canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
 }
-function getThumb(rel, max = 160) {
+function getThumb(rel, max = THUMB_SMALL) {
   const key = rel + '|' + max;
   if (!thumbCache.has(key)) thumbCache.set(key, new Promise(ok => { thumbQueue.push({ rel, max, ok }); pumpThumbs(); }));
   return thumbCache.get(key);
@@ -1827,7 +1842,7 @@ document.addEventListener('click', async e => {
   }
   $('zoomBox').innerHTML = '<img id="zoomImg" alt="">';
   $('zoomCap').textContent = img.dataset.th + ' (đang tải ảnh to…)'; $('zoomImg').src = img.src || ''; $('zoom').showModal();
-  const u = await getThumb(img.dataset.th, 1000);
+  const u = await getThumb(img.dataset.th, THUMB_BIG);
   if (u) $('zoomImg').src = u;
   $('zoomCap').textContent = img.dataset.th + (/\.tiff?$/i.test(img.dataset.th) ? ' · màu xem trước chỉ gần đúng với file in' : '');
 });
