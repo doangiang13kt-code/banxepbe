@@ -88,6 +88,7 @@ td select{max-width:320px;padding:3px 5px}
   <h1>Lấy file <span>in tranh</span></h1>
   <nav role="tablist">
     <button role="tab" data-tab="don" aria-selected="true">Đơn hàng</button>
+    <button role="tab" data-tab="tw" aria-selected="false">Chờ thiết kế</button>
     <button role="tab" data-tab="tk" aria-selected="false">Thống kê</button>
     <button role="tab" data-tab="cd" aria-selected="false">Cài đặt</button>
   </nav>
@@ -129,6 +130,7 @@ td select{max-width:320px;padding:3px 5px}
   <div class="panel">
     <div class="row">
       <h2 class="grow" style="margin:0">Phân tích đơn</h2>
+      <button id="rescan" class="noprint">Quét lại kho</button>
       <button id="clearList" class="noprint">Xóa danh sách</button>
       <button id="run" class="main noprint" disabled>Lấy file</button>
     </div>
@@ -144,6 +146,21 @@ td select{max-width:320px;padding:3px 5px}
       </table>
     </div>
     <p class="note" id="emptyRows">Chưa có đơn nào.</p>
+  </div>
+</section>
+
+<section id="tab-tw" hidden>
+  <div class="panel">
+    <div class="row">
+      <h2 class="grow" style="margin:0">Mẫu chưa có file</h2>
+      <button id="twReload">Tải lại</button>
+    </div>
+    <p class="note">Máy này: <b id="twMachine"></b>. Làm xong file và đã chép vào kho thì bấm xác nhận.</p>
+    <p class="warnline" id="twShare" hidden>Chưa chọn thư mục lưu file cần in dùng chung ở tab Đơn hàng, nên máy khác chưa thấy xác nhận của máy này.</p>
+    <div class="tbl"><table>
+      <thead><tr><th>Mẫu</th><th>Các cỡ đơn cần</th><th class="num">Số dòng đơn</th><th class="num">Số file đã làm</th><th>Trạng thái</th><th></th></tr></thead>
+      <tbody id="twRows"></tbody>
+    </table></div>
   </div>
 </section>
 
@@ -192,6 +209,21 @@ td select{max-width:320px;padding:3px 5px}
       <tbody id="tkHist"></tbody>
     </table></div>
   </div>
+  <div class="panel">
+    <h2>Thiết kế làm được</h2>
+    <div class="tbl"><table>
+      <thead><tr><th>Kỳ</th><th>Thiết kế</th><th class="num">Số mẫu</th><th class="num">Số file</th></tr></thead>
+      <tbody id="dsRows"></tbody>
+    </table></div>
+  </div>
+  <div class="panel noprint">
+    <h2>Quy đổi máy sang người thiết kế</h2>
+    <p class="note">Nhập tên người cho từng ID máy. Một người dùng nhiều máy thì nhập cùng một tên, số liệu sẽ được cộng lại.</p>
+    <div class="tbl"><table>
+      <thead><tr><th>ID máy</th><th>Tên máy</th><th>Lần cuối thấy</th><th class="num">Số file</th><th>Người thiết kế</th></tr></thead>
+      <tbody id="dsMachines"></tbody>
+    </table></div>
+  </div>
   <div class="panel noprint">
     <h2>Dữ liệu thống kê</h2>
     <p class="note">Thống kê lưu trên máy này và trong file <b>thongke-in.json</b> ở thư mục lưu file cần in. Các máy cùng chọn một thư mục dùng chung (thư mục mạng) sẽ thấy chung số liệu.</p>
@@ -201,6 +233,14 @@ td select{max-width:320px;padding:3px 5px}
 </section>
 
 <section id="tab-cd" hidden>
+  <div class="panel">
+    <h2>Máy này</h2>
+    <div class="row end">
+      <label class="f">ID máy<input id="cfgId" readonly size="12"></label>
+      <label class="f">Tên máy (tự đặt)<input id="cfgLabel" placeholder="Ví dụ thietke-03" size="20"></label>
+    </div>
+    <p class="note">ID do app tạo và gắn với trình duyệt trên máy này. Xóa dữ liệu trình duyệt hoặc đổi trình duyệt sẽ ra ID mới; khi đó bạn chỉ cần gán tên người cho ID mới.</p>
+  </div>
   <div class="panel">
     <h2>Chỉnh kích thước</h2>
     <div class="row end">
@@ -570,7 +610,41 @@ const Core = (() => {
     return [...m.values()];
   }
 
-  return { parseVariation, parseSizeText, parseCodeText, parseFilePath, buildIndex, matchOrder, parseRows, sameSize, ratio, sizeKey,
+  /* ---- thiết kế: gộp dữ liệu của từng máy ---- */
+  const modelKey = o => o.code + (o.variant ? '-' + o.variant : '');
+  function mergeShared(files) {
+    const missing = {}, labels = {}, names = {};
+    let confirms = [];
+    for (const f of files) {
+      if (!f || !f.id) continue;
+      labels[f.id] = { label: f.label || '', seen: f.t || 0 };
+      for (const m of f.missing || []) {
+        const x = missing[m.key] = missing[m.key] || { key: m.key, sizes: [], orders: 0, pieces: 1 };
+        x.sizes = [...new Set([...x.sizes, ...m.sizes])]; x.orders += m.orders; x.pieces = Math.max(x.pieces, m.pieces);
+      }
+      confirms = mergeRecords(confirms, f.confirms || []);
+      for (const [id, n] of Object.entries(f.names || {})) if (!names[id] || n.t > names[id].t) names[id] = n;
+    }
+    /* cùng một mẫu chỉ tính cho người xác nhận đầu tiên */
+    const live = {};
+    for (const c of confirms.filter(c => !c.del).sort((a, b) => a.t - b.t)) if (!live[c.key]) live[c.key] = c;
+    return { missing: Object.values(missing), live, labels, names };
+  }
+  function designSummary(shared, kind, from, to) {
+    const per = {}, machines = {};
+    const nameOf = id => (shared.names[id] && shared.names[id].name) || `Máy ${id}`;
+    for (const id of Object.keys(shared.labels)) machines[id] = { id, label: shared.labels[id].label, seen: shared.labels[id].seen, models: 0, files: 0 };
+    for (const c of Object.values(shared.live)) {
+      if ((from && c.date < from) || (to && c.date > to)) continue;
+      const P = per[`${periodKey(c.date, kind)}|${nameOf(c.machine)}`] = per[`${periodKey(c.date, kind)}|${nameOf(c.machine)}`] || { period: periodKey(c.date, kind), who: nameOf(c.machine), models: 0, files: 0 };
+      P.models++; P.files += c.files;
+      const M = machines[c.machine] = machines[c.machine] || { id: c.machine, label: '', seen: 0, models: 0, files: 0 };
+      M.models++; M.files += c.files;
+    }
+    return { rows: Object.values(per).sort((a, b) => b.period.localeCompare(a.period) || b.files - a.files), machines: Object.values(machines) };
+  }
+
+  return { modelKey, mergeShared, designSummary, parseVariation, parseSizeText, parseCodeText, parseFilePath, buildIndex, matchOrder, parseRows, sameSize, ratio, sizeKey,
     tiffInfo, tiffResizeParts, cropRect, tiffCrop, jpegResizeParts, pngResizeParts, physChunk,
     areaM2, frameM, periodKey, summarize, mergeRecords, round };
 })();
@@ -581,7 +655,8 @@ if (typeof module !== 'undefined') module.exports = Core;
 /* Phần giao diện */
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const S = { src: null, dst: null, index: {}, handles: new Map(), orders: [], records: [], filter: 'all', cfg: { minDpi: 100, maxCrop: 25 } };
+const S = { src: null, dst: null, index: {}, handles: new Map(), orders: [], records: [], filter: 'all', cfg: { minDpi: 100, maxCrop: 25 },
+  machine: '', mine: { label: '', missing: [], confirms: [], names: {} }, shared: Core.mergeShared([]) };
 const PW = { salt: 'newhouse-layfilein-v1', hash: 'b77ea80da681b3c9d1f0366943dfae579bbdb2ecc63b718b9cdb688644ded6c6' };
 const PW_TK = { salt: 'newhouse-thongke-v1', hash: '96d2155416b804c83c50f374207f3d90c4502fe7c4f193b544d76b2ef5f976ba' };
 const STATS_FILE = 'thongke-in.json';
@@ -617,10 +692,18 @@ async function enter() {
   S.cfg = { ...S.cfg, ...(await kvGet('cfg') || {}) };
   S.records = await kvGet('records') || [];
   S.orders = await kvGet('orders') || [];
+  S.machine = await kvGet('machineId');
+  if (!S.machine) {
+    S.machine = 'M-' + [...crypto.getRandomValues(new Uint8Array(3))].map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+    await kvSet('machineId', S.machine);
+  }
+  S.mine = { ...S.mine, ...(await kvGet('mine') || {}) };
+  $('cfgId').value = S.machine; $('cfgLabel').value = S.mine.label;
   $('minDpi').value = S.cfg.minDpi; $('maxCrop').value = S.cfg.maxCrop;
   const s = await kvGet('srcDir'), d = await kvGet('dstDir');
   if (s) { S.src = s; $('srcName').textContent = s.name + ' (bấm để cấp quyền lại)'; }
   if (d) { S.dst = d; $('dstName').textContent = d.name + ' (bấm để cấp quyền lại)'; }
+  await syncShared();
   renderOrders(); renderStats();
 }
 try { if (sessionStorage.getItem('in') === '1') enter(); } catch (_) { }
@@ -637,8 +720,9 @@ $('tkClose').addEventListener('click', () => setTk(false));
 /* ---- tab ---- */
 document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => {
   document.querySelectorAll('nav button').forEach(x => x.setAttribute('aria-selected', x === b));
-  for (const t of ['don', 'tk', 'cd']) $('tab-' + t).hidden = t !== b.dataset.tab;
-  if (b.dataset.tab === 'tk') renderStats();
+  for (const t of ['don', 'tw', 'tk', 'cd']) $('tab-' + t).hidden = t !== b.dataset.tab;
+  if (b.dataset.tab === 'tk') { renderStats(); syncShared(); }
+  if (b.dataset.tab === 'tw') syncShared();
 }));
 
 /* ---- thư mục ---- */
@@ -681,7 +765,7 @@ $('pickDst').addEventListener('click', async () => {
       await kvSet('dstDir', S.dst);
     }
     $('dstName').textContent = S.dst.name;
-    await syncStats(); updateRun();
+    await syncStats(); await syncShared(); updateRun();
   } catch (e) { if (e.name !== 'AbortError') alert(e.message); }
 });
 
@@ -748,7 +832,73 @@ function analyze() {
     o.status = o.match ? o.match.status : 'wait';
   }
   kvSet('orders', S.orders);
+  if (ready) {
+    const miss = {};
+    for (const o of S.orders) {
+      if (o.status !== 'missing' || !o.code) continue;
+      const key = Core.modelKey(o), m = miss[key] = miss[key] || { key, sizes: [], orders: 0, pieces: 1 };
+      if (o.size) m.sizes = [...new Set([...m.sizes, Core.sizeKey(o.size.w, o.size.h)])];
+      m.orders++; m.pieces = Math.max(m.pieces, Math.round(o.pieces));
+    }
+    S.mine.missing = Object.values(miss);
+    syncShared();
+  }
   renderOrders();
+}
+
+/* ---- thiết kế: mỗi máy chỉ ghi file của mình trong _dulieu, nên các máy không đè dữ liệu của nhau ---- */
+const myFile = () => ({ id: S.machine, label: S.mine.label, t: Date.now(), missing: S.mine.missing, confirms: S.mine.confirms, names: S.mine.names });
+async function syncShared() {
+  const files = [myFile()];
+  let shared = false;
+  await kvSet('mine', S.mine);
+  try {
+    if (S.dst && await S.dst.queryPermission({ mode: 'readwrite' }) === 'granted') {
+      const d = await S.dst.getDirectoryHandle('_dulieu', { create: true }), mine = `may-${S.machine}.json`;
+      await writeParts(d, mine, [JSON.stringify(myFile())]);
+      for await (const [name, h] of d.entries()) {
+        if (name === mine || !/^may-.*\.json$/.test(name)) continue;
+        try { files.push(JSON.parse(await (await h.getFile()).text())); } catch (_) { }
+      }
+      shared = true;
+    }
+  } catch (e) { console.warn(e); }
+  S.shared = Core.mergeShared(files);
+  $('twShare').hidden = shared;
+  renderDesign(); renderOrders();
+}
+async function confirmModel(key, files) {
+  const old = S.mine.confirms.find(c => c.key === key);
+  const rec = { id: `${key}|${S.machine}`, key, machine: S.machine, files: Math.max(1, files || 1), date: today(), t: Date.now() };
+  if (old) Object.assign(old, rec, { del: false }); else S.mine.confirms.push(rec);
+  await syncShared();
+}
+async function undoConfirm(key) {
+  const c = S.mine.confirms.find(x => x.key === key);
+  if (c) { c.del = true; c.t = Date.now(); await syncShared(); }
+}
+function renderDesign() {
+  const { missing, live, labels } = S.shared, sh = S.shared;
+  $('twMachine').textContent = S.machine + (S.mine.label ? ` (${S.mine.label})` : '');
+  /* quét kho thấy file thì mẫu tự rời danh sách, số liệu thiết kế vẫn giữ */
+  const list = [...missing];
+  list.sort((a, b) => !!live[a.key] - !!live[b.key] || a.key.localeCompare(b.key));
+  $('twRows').innerHTML = list.map(m => {
+    const c = live[m.key], mineC = c && c.machine === S.machine;
+    const who = c ? (sh.names[c.machine] && sh.names[c.machine].name) || c.machine : '';
+    return `<tr><td><b>${esc(m.key)}</b></td><td>${esc(m.sizes.join(', '))}</td><td class="num">${m.orders || ''}</td>
+      <td class="num">${c ? c.files : `<input data-tw="${esc(m.key)}" type="number" min="1" value="${m.pieces}" aria-label="Số file" style="width:62px;padding:2px 4px">`}</td>
+      <td>${c ? `<span class="tag ok">Đã có file</span><div class="note">${esc(who)} xác nhận ${c.date.split('-').reverse().join('/')}</div>` : '<span class="tag err">Chưa có file</span>'}</td>
+      <td>${c ? (mineC ? `<button class="link" data-undo="${esc(m.key)}">Hủy xác nhận</button>` : '') : `<button data-cf="${esc(m.key)}">Xác nhận đã có file</button>`}</td></tr>`;
+  }).join('') || '<tr><td colspan="6" class="note">Không có mẫu nào đang chờ.</td></tr>';
+  document.querySelectorAll('#twRows [data-cf]').forEach(b => b.onclick = () => confirmModel(b.dataset.cf, +document.querySelector(`[data-tw="${CSS.escape(b.dataset.cf)}"]`).value));
+  document.querySelectorAll('#twRows [data-undo]').forEach(b => b.onclick = () => undoConfirm(b.dataset.undo));
+  const kind = $('tkKind').value, ds = Core.designSummary(sh, kind, $('tkFrom').value, $('tkTo').value);
+  $('dsRows').innerHTML = ds.rows.map(r => `<tr><td>${labelPeriod(r.period, kind)}</td><td>${esc(r.who)}</td><td class="num">${r.models}</td><td class="num">${r.files}</td></tr>`).join('') || '<tr><td colspan="4" class="note">Chưa có xác nhận nào.</td></tr>';
+  const active = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.nm : null;
+  if (!active) $('dsMachines').innerHTML = ds.machines.map(m => `<tr><td><b>${esc(m.id)}</b>${m.id === S.machine ? ' <span class="tag mut">máy này</span>' : ''}</td><td>${esc(m.label)}</td><td>${m.seen ? new Date(m.seen).toLocaleString('vi-VN') : ''}</td><td class="num">${m.files}</td>
+    <td><input data-nm="${esc(m.id)}" value="${esc(sh.names[m.id] ? sh.names[m.id].name : '')}" placeholder="Nhập tên" size="16" aria-label="Người thiết kế của ${esc(m.id)}"></td></tr>`).join('');
+  document.querySelectorAll('[data-nm]').forEach(i => i.onchange = () => { S.mine.names[i.dataset.nm] = { name: i.value.trim(), t: Date.now() }; i.blur(); syncShared(); });
 }
 const TAGS = { done: ['ok', 'Đã lấy file'], ok: ['ok', 'Có sẵn đúng cỡ'], resize: ['warn', 'Sẽ chỉnh kích thước'], review: ['warn', 'Cần xem lại'], missing: ['err', 'Không tìm thấy file'], wait: ['mut', 'Chờ chọn thư mục'], fail: ['err', 'Lỗi khi lấy file'] };
 const FILTERS = [['all', 'Tất cả', ''], ['done', 'Đã lấy file', 'ok'], ['ready', 'Sẵn sàng lấy', 'ok'], ['review', 'Cần xem lại', 'warn'], ['missing', 'Không tìm thấy', 'err']];
@@ -771,17 +921,26 @@ function renderOrders() {
       <td class="num">${o.qty}</td>
       <td class="num"><input data-pcs="${o.id}" type="number" min="1" value="${o.qty * o.pieces}" aria-label="Tổng tấm" style="width:62px;padding:2px 4px" ${o.status === 'done' ? 'disabled' : ''}></td>
       <td><span class="path">${file}</span>${sel}${o.warn ? `<div class="warnline">${esc(o.warn)}</div>` : ''}</td>
-      <td><span class="tag ${cls}">${label}</span>${m && m.note && o.status !== 'done' ? `<div class="note">${esc(m.note)}</div>` : ''}${o.err ? `<div class="err">${esc(o.err)}</div>` : ''}</td>
+      <td><span class="tag ${cls}">${label}</span>${m && m.note && o.status !== 'done' ? `<div class="note">${esc(m.note)}</div>` : ''}${o.err ? `<div class="err">${esc(o.err)}</div>` : ''}${o.status === 'missing' && o.code ? (S.shared.live[Core.modelKey(o)] ? '<div class="note"><span class="tag ok">Thiết kế đã xác nhận</span> Bấm Quét lại kho để lấy file</div>' : `<div style="margin-top:4px" class="noprint"><button class="link" data-cfo="${esc(Core.modelKey(o))}" data-n="${Math.round(o.pieces)}">Xác nhận đã có file</button></div>`) : ''}</td>
       <td class="noprint"><button class="link" data-del="${o.id}">Xóa</button></td></tr>`;
   }).join('');
   document.querySelectorAll('[data-pick]').forEach(s => s.onchange = () => { const o = S.orders.find(x => x.id === s.dataset.pick); o.chosen = s.value; analyze(); });
   document.querySelectorAll('[data-code]').forEach(s => s.onchange = () => { const o = S.orders.find(x => x.id === s.dataset.code), c = Core.parseCodeText(s.value); if (c) { o.code = c.code; o.variant = c.variant; analyze(); } });
   document.querySelectorAll('[data-size]').forEach(s => s.onchange = () => { const o = S.orders.find(x => x.id === s.dataset.size), z = Core.parseSizeText(s.value); if (z) { o.size = z; analyze(); } });
   document.querySelectorAll('[data-pcs]').forEach(s => s.onchange = () => { const o = S.orders.find(x => x.id === s.dataset.pcs); o.pieces = Math.max(1, +s.value || 1) / o.qty; kvSet('orders', S.orders); });
+  document.querySelectorAll('[data-cfo]').forEach(b => b.onclick = () => confirmModel(b.dataset.cfo, +b.dataset.n));
   document.querySelectorAll('[data-del]').forEach(b => b.onclick = () => { S.orders = S.orders.filter(x => x.id !== b.dataset.del); analyze(); });
   updateRun();
 }
 function updateRun() { $('run').disabled = !S.dst || !S.orders.some(o => ['ok', 'resize'].includes(o.status)); }
+$('rescan').addEventListener('click', async () => {
+  if (S.src && await ensurePerm(S.src, 'read')) scan(); else $('scanInfo').textContent = 'Hãy chọn thư mục lấy file trước.';
+});
+$('twReload').addEventListener('click', async () => {
+  if (S.dst) await ensurePerm(S.dst, 'readwrite');
+  syncShared();
+});
+$('cfgLabel').addEventListener('change', e => { S.mine.label = e.target.value.trim(); syncShared(); });
 $('clearList').addEventListener('click', () => { if (confirm('Xóa danh sách đơn đang hiện? Thống kê không bị ảnh hưởng.')) { S.orders = []; analyze(); } });
 
 /* ---- lấy file ---- */
@@ -926,7 +1085,7 @@ function renderStats() {
     await saveStats(); analyze(); renderStats();
   });
 }
-for (const id of ['tkKind', 'tkFrom', 'tkTo']) $(id).addEventListener('change', renderStats);
+for (const id of ['tkKind', 'tkFrom', 'tkTo']) $(id).addEventListener('change', () => { renderStats(); renderDesign(); });
 $('tkPrint').addEventListener('click', () => window.print());
 function download(name, text, type) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click();
