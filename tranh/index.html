@@ -187,25 +187,28 @@ td select{max-width:320px;padding:3px 5px}
       <label class="f">Số điện thoại *<input id="dlPhone" type="tel" inputmode="tel" size="13"></label>
       <label class="f grow">Địa chỉ *<input id="dlAddr" style="width:100%"></label>
     </div>
+    <h3 style="margin:14px 0 6px;font-size:15px">Sản phẩm trong đơn</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>#</th><th>Mã sản phẩm trong kho (nếu có)</th><th>Kích thước (cm) *</th><th class="num">SL</th><th class="num">Tiền sản phẩm (đ) *</th><th>Phân loại</th><th>Ảnh mẫu khách gửi</th><th>Ghi chú</th><th></th></tr></thead>
+      <tbody id="dlItems"></tbody>
+    </table></div>
     <div class="row end" style="margin-top:8px">
-      <label class="f">Kích thước (cm) *<input id="dlSize" placeholder="40x60" size="8"></label>
-      <label class="f">Số lượng<input id="dlQty" type="number" min="1" value="1" style="width:70px"></label>
-      <label class="f">Tổng tiền (đ)<input id="dlPrice" inputmode="numeric" placeholder="350.000" size="12"></label>
-      <label class="f">Phân loại<select id="dlCat"></select></label>
-      <label class="f grow">Ghi chú<input id="dlNote" style="width:100%"></label>
-    </div>
-    <div class="row end" style="margin-top:8px">
-      <label class="btn"><input id="dlImg" type="file" accept="image/png,image/jpeg,image/tiff,.tif,.tiff" multiple hidden>Chọn ảnh tranh *</label>
-      <span class="note grow" id="dlImgInfo">Chưa chọn ảnh</span>
+      <button id="dlAddItem">+ Thêm sản phẩm</button>
+      <span class="note grow" id="dlSum"></span>
+      <label class="f">Tổng tiền đơn (đ) *<input id="dlTotal" inputmode="numeric" size="12"></label>
+      <label class="f grow">Ghi chú đơn<input id="dlNote" style="width:100%"></label>
       <button id="dlAdd" class="main">Lên đơn</button>
     </div>
     <div class="err" id="dlErr" role="alert"></div>
-    <p class="note">Ảnh tranh được chép nguyên bản gốc vào thư mục lưu của phân loại để in, app chỉ thu nhỏ bản xem trước. Đơn chuyển ngay sang tab Sản xuất.</p>
+    <div class="note" id="dlInfo"></div>
+    <p class="note">Mã đơn = chữ cái đầu tên người lên đơn + 4 số cuối SĐT, ví dụ <b>H5678</b>; sản phẩm thứ hai là <b>H5678-2</b>.
+      Sản phẩm có mã trong kho được app tự lấy file theo kích thước khách đặt. Sản phẩm không có mã chuyển sang <b>Chờ thiết kế</b>:
+      thiết kế lưu file tên bắt đầu bằng mã sản phẩm (ví dụ <b>H5678-2.jpg</b>) vào thư mục thiết kế đơn lẻ, rồi bấm <b>Đã thiết kế xong</b> ở tab Đơn hàng.</p>
   </div>
   <div class="panel" style="background:var(--warn-bg)">
     <h2>Cần tạo đơn gửi hàng</h2>
     <div class="tbl" style="background:var(--panel)"><table>
-      <thead><tr><th>Ảnh</th><th>Mã</th><th>Khách</th><th>Địa chỉ</th><th>Tranh</th><th class="num">Tiền</th><th>Người lên đơn</th><th>Xong lúc</th><th></th></tr></thead>
+      <thead><tr><th>Mã đơn</th><th>Khách</th><th>Địa chỉ</th><th>Sản phẩm</th><th class="num">Tổng tiền</th><th>Người lên đơn</th><th>Phiếu gửi</th><th></th></tr></thead>
       <tbody id="dlShip"></tbody>
     </table></div>
   </div>
@@ -220,12 +223,12 @@ td select{max-width:320px;padding:3px 5px}
       <thead><tr><th>Kỳ</th><th>Người lên đơn</th><th class="num">Số đơn</th><th class="num">Số tranh</th><th class="num">Doanh số</th><th class="num">Đang làm</th><th class="num">Chờ gửi</th><th class="num">Đã gửi</th><th class="num">Hủy</th></tr></thead>
       <tbody id="dlStats"></tbody>
     </table></div>
-    <p class="note">Doanh số không tính đơn hủy và đơn xong mà khách hủy.</p>
+    <p class="note">Doanh số theo tổng tiền đơn, không tính đơn mà mọi sản phẩm đều hủy.</p>
   </div>
   <div class="panel">
-    <div class="row end"><h2 class="grow" style="margin:0">Danh sách đơn lẻ</h2><input id="dlQ" placeholder="Tìm SĐT, tên khách, mã" size="24" aria-label="Tìm đơn lẻ"></div>
+    <div class="row end"><h2 class="grow" style="margin:0">Danh sách đơn lẻ</h2><input id="dlQ" placeholder="Tìm SĐT, tên khách, mã đơn" size="24" aria-label="Tìm đơn lẻ"></div>
     <div class="tbl" style="margin-top:8px;max-height:560px;overflow:auto"><table>
-      <thead><tr><th>Ảnh</th><th>Ngày</th><th>Mã</th><th>Khách</th><th>Địa chỉ</th><th>Tranh</th><th class="num">Tiền</th><th>Người lên đơn</th><th>Tình trạng</th></tr></thead>
+      <thead><tr><th>Ngày</th><th>Mã đơn</th><th>Khách</th><th>Địa chỉ</th><th>Sản phẩm</th><th class="num">Tổng tiền</th><th>Người lên đơn</th><th>Tình trạng</th><th>Phiếu gửi</th></tr></thead>
       <tbody id="dlRows"></tbody>
     </table></div>
   </div>
@@ -351,6 +354,7 @@ td select{max-width:320px;padding:3px 5px}
     <p class="note">Mỗi phân loại là một thư mục cùng tên, nằm trong thư mục lưu file cần in. Sản phẩm không có phân loại được lưu vào thư mục chung.</p>
     <div class="row end"><label class="f">Thư mục chung cho sản phẩm chưa phân loại<input id="catCommon" size="26"></label>
       <span class="note">Lưu vào: <b id="commonDir"></b></span> <button id="commonPick">Chọn thư mục lưu…</button> <button class="link" id="commonReset">Bỏ</button></div>
+    <div class="row end" style="margin-top:8px"><span class="note">Thư mục thiết kế đơn lẻ (thiết kế lưu file vào đây): <b id="designDirLbl"></b></span> <button id="designPick">Chọn thư mục thiết kế…</button></div>
     <div class="tbl" style="margin-top:10px"><table>
       <thead><tr><th>Tên phân loại</th><th>Từ khóa tự nhận, cách nhau dấu phẩy</th><th>Thư mục lưu (dùng chung, cần mật khẩu)</th><th>Chỉ ghi đường dẫn, không chép file</th><th></th></tr></thead>
       <tbody id="catRows"></tbody>
@@ -904,8 +908,8 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const S = { src: null, dst: null, index: {}, handles: new Map(), orders: [], records: [], filter: 'all', cfg: { minDpi: 100, maxCrop: 25 },
   machine: '', mine: { label: '', missing: [], confirms: [], names: {} }, shared: Core.mergeShared([]),
-  cat: null, admin: false, leSeen: new Set(), openGroups: new Set(), imgKeys: new Set(), imgRemote: new Map() };
-const normCat = c => ({ t: 0, list: [], common: 'Chưa phân loại', products: {}, folders: {}, listings: {}, lfolders: {}, known: {}, saveDirs: {}, ...(c || {}) });
+  cat: null, admin: false, leSeen: new Set(), le: [], labels: new Map(), openGroups: new Set(), imgKeys: new Set(), imgRemote: new Map() };
+const normCat = c => ({ t: 0, list: [], common: 'Chưa phân loại', products: {}, folders: {}, listings: {}, lfolders: {}, known: {}, saveDirs: {}, designDir: 'Thiet ke don le', ...(c || {}) });
 S.cat = normCat();
 const PW = { salt: 'newhouse-layfilein-v1', hash: 'b77ea80da681b3c9d1f0366943dfae579bbdb2ecc63b718b9cdb688644ded6c6' };
 const PW_TK = { salt: 'newhouse-thongke-v1', hash: '8300f5632a95b76c6998f0a29e9433146e0f2d3aee8aa463d061d5b6797b5837' };
@@ -953,6 +957,7 @@ async function enter() {
   $('cfgKhoThumb').checked = !!S.cfg.khoThumb;
   S.imgKeys = new Set(await kvGet('imgKeys') || []); rebuildImgIndex();
   S.leSeen = new Set(await kvGet('leSeen') || []);
+  S.le = await kvGet('le') || [];
   $('dlBy').value = await kvGet('dlBy') || '';
   renderCat();
   $('cfgId').value = S.machine; $('cfgLabel').value = S.mine.label;
@@ -1121,6 +1126,7 @@ function latestRecs() {
   return m;
 }
 function analyze() {
+  injectLe();
   const ready = Object.keys(S.index).length > 0;
   const recs = latestRecs();
   for (const o of S.orders) {
@@ -1129,6 +1135,8 @@ function analyze() {
     if (r && r.prod && !o.retake) { o.status = 'finished'; continue; }
     if (o.retake === false) { o.status = 'taken'; continue; }
     if (r && !o.retake) { o.status = 'done'; continue; }
+    /* sản phẩm đơn lẻ không có mã kho: chờ thiết kế làm file */
+    if (o.le && !o.code) { o.status = 'design'; o.match = null; continue; }
     if (o.chosen && o.size && S.handles.has(o.chosen)) {
       const f = (S.index.all || []).find(x => x.rel === o.chosen) || { rel: o.chosen, size: null };
       o.match = { status: Core.sameSize(f.size, o.size) ? 'ok' : 'resize', files: [f], candidates: o.match ? o.match.candidates : [], note: 'Bạn đã chọn file' };
@@ -1154,10 +1162,10 @@ function analyze() {
 async function setProd(r, v) {
   Object.assign(r, { prod: v, prodT: Date.now(), prodBy: S.machine, t: Date.now() });
   if (v === 'huy') r.stockUsed = r.stockUsed || 0;
-  /* đơn lẻ làm xong thì phải tạo đơn gửi hàng cho khách */
-  if (r.kind === 'le') { if (v === 'xong' && r.ship !== 'da') r.ship = 'can'; else if (v !== 'xong' && r.ship === 'can') delete r.ship; }
   await saveStats();
-  if (r.kind === 'le' && r.ship === 'can') { S.leSeen.add(r.id); kvSet('leSeen', [...S.leSeen]); shipAlert([r]); }
+  /* đơn lẻ: khi mọi sản phẩm đã xong thì báo cần tạo đơn gửi hàng */
+  const L = isLeRec(r) && S.le.find(x => !x.del && x.code === r.orderKey.split('|')[1]);
+  if (L && leState(L) === 'cho') { S.leSeen.add(L.id); kvSet('leSeen', [...S.leSeen]); shipAlert([L]); }
 }
 async function setOrderProd(o, v) {
   if (v === 'huydon' && !confirm(`Hủy đơn ${isAuto(o) ? 'nhập tay' : shortId(o.orderId)}: ${codeLabel(o)}?`)) return;
@@ -1196,13 +1204,17 @@ async function checkStock(list) {
 const PROD = { xong: ['ok', 'Đã xong'], huy: ['warn', 'Đã xong mà hủy'], huydon: ['err', 'Hủy đơn'], kho: ['mut', 'Lấy từ tồn kho'] };
 const fmtT = t => t ? new Date(t).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' }) : '';
 const localDay = t => { const d = new Date(t); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
-const recThumb = r => { const k = [Core.productKey({ variation: r.variation || '' }), r.code].map(imgKey).find(hasImg); return k ? imgTag(k, r.code) : ''; };
-const recId = r => r.kind === 'le' ? `<b>${esc(r.code)}</b> <span class="tag mut">đơn lẻ</span>` : r.orderId ? `<b title="${esc(r.orderId)}">${esc(shortId(r.orderId))}</b>` : 'Nhập tay';
+const recThumb = r => {
+  const le = isLeRec(r) ? r.orderKey.split('|').slice(1).join('-') : '';
+  const k = [le, Core.productKey({ variation: r.variation || '' }), r.code].filter(Boolean).map(imgKey).find(hasImg);
+  return k ? imgTag(k, r.code) : '';
+};
+const recId = r => isLeRec(r) ? `<b>${esc(r.orderId)}</b> <span class="tag mut">đơn lẻ</span>` : r.orderId ? `<b title="${esc(r.orderId)}">${esc(shortId(r.orderId))}</b>` : 'Nhập tay';
 const whoDid = id => (S.shared.names[id] && S.shared.names[id].name) || (S.shared.labels[id] && S.shared.labels[id].label) || id || '';
 function renderProd() {
   const live = S.records.filter(r => !r.del);
   const doing = live.filter(r => !r.prod).sort((a, b) => b.t - a.t);
-  $('sxRows').innerHTML = doing.map(r => `<tr><td>${recThumb(r)}</td><td>${esc(r.date.split('-').reverse().join('/'))}</td><td>${recId(r)}</td><td><b>${esc(r.code)}</b></td><td>${r.w}x${r.h}</td><td class="num">${r.count}</td><td class="path">${esc(r.file)}</td>
+  $('sxRows').innerHTML = doing.map(r => `<tr><td>${recThumb(r)}</td><td>${esc(r.date.split('-').reverse().join('/'))}</td><td>${recId(r)}</td><td><b>${esc(r.code)}</b></td><td>${r.w}x${r.h}</td><td class="num">${r.count}</td><td class="path">${esc(r.file)}${r.orderId && hasLabel(r.orderId) ? ' <span class="tag ok">Có phiếu gửi</span>' : ''}</td>
     <td class="noprint" style="white-space:nowrap"><button class="link" data-pr="${r.id}" data-v="xong">Đã xong</button><br><button class="link" data-pr="${r.id}" data-v="huy">Xong mà hủy</button><br><button class="link" data-pr="${r.id}" data-v="huydon">Hủy đơn</button></td></tr>`).join('')
     || '<tr><td colspan="8" class="note">Không có đơn nào đang làm.</td></tr>';
   renderLe();
@@ -1213,7 +1225,7 @@ function renderProd() {
     const [c, l] = PROD[r.prod] || ['mut', r.prod], by = whoDid(r.prodBy);
     return `<tr><td>${recThumb(r)}</td><td>${fmtT(r.prodT)}</td><td>${recId(r)}</td><td><b>${esc(r.code)}</b></td><td>${r.w ? `${r.w}x${r.h}` : ''}</td><td class="num">${r.count}</td>
       <td><span class="tag ${c}">${l}</span>${r.prod === 'huy' && r.stockUsed ? `<div class="note">Đã dùng ${r.stockUsed}/${r.count} tấm</div>` : ''}${by ? `<div class="note">${esc(by)}</div>` : ''}</td>
-      <td class="noprint"><button class="link" data-unpr="${r.id}">Đổi lại</button></td></tr>`;
+      <td class="noprint" style="white-space:nowrap">${r.orderId && hasLabel(r.orderId) && orderDone(r.orderId) ? `<button class="link" data-plp="${esc(r.orderId)}">In phiếu gửi</button><br>` : ''}<button class="link" data-unpr="${r.id}">Đổi lại</button></td></tr>`;
   }).join('') || '<tr><td colspan="8" class="note">Chưa có đơn nào.</td></tr>';
   $('stockRows').innerHTML = stockList().sort((x, y) => (y.prodT || 0) - (x.prodT || 0)).map(r => `<tr><td>${recThumb(r)}</td><td><b>${esc(r.code)}</b></td><td>${r.w}x${r.h}</td><td class="num">${stockLeft(r)}</td><td>${recId(r)}</td><td>${fmtT(r.prodT)}</td>
     <td class="noprint"><button class="link" data-out="${r.id}">Bỏ khỏi tồn kho</button></td></tr>`).join('') || '<tr><td colspan="7" class="note">Tồn kho trống.</td></tr>';
@@ -1240,90 +1252,244 @@ function renderProd() {
 }
 for (const id of ['sxFrom', 'sxTo', 'sxSt']) $(id).addEventListener('change', renderProd);
 
-/* ---- đơn lẻ: lưu trong dòng thống kê dùng chung (kind 'le'), kèm khách, SĐT, địa chỉ, tiền, người lên đơn ---- */
+/* ---- đơn lẻ: đơn ngoài Shopee, nhiều sản phẩm; lưu chung ở _dulieu/donle.json, mỗi sản phẩm thành một dòng ở Phân tích đơn ---- */
 const money = v => (+v || 0).toLocaleString('vi-VN') + ' đ';
-const leCreator = r => r.creator || whoDid(r.creatorMachine) || '(không rõ)';
+const digits = s => +String(s || '').replace(/[^\d]/g, '') || 0;
+const LE_FILE = 'donle.json';
+const leCreator = L => L.creator || whoDid(L.creatorMachine) || '(không rõ)';
 const LE_ST = { lam: ['mut', 'Đang làm'], cho: ['warn', 'Chờ gửi hàng'], gui: ['ok', 'Đã gửi'], huy: ['err', 'Hủy'] };
-const leState = r => r.prod === 'huydon' || r.prod === 'huy' ? 'huy' : r.ship === 'da' ? 'gui' : r.prod === 'xong' ? 'cho' : 'lam';
-const leCust = r => `${r.cust && r.cust.name ? `<b>${esc(r.cust.name)}</b><br>` : ''}${esc(r.cust ? r.cust.phone : '')}`;
-let dlFiles = [];
+const leOf = o => S.le.find(L => L.id === o.leId);
+const leItemKey = (L, it) => `${L.code}-${it.n}`;
+const isLeRec = r => String(r.orderKey || '').startsWith('le|');
+/* tình trạng cả đơn lẻ: tính từ trạng thái sản xuất của từng sản phẩm */
+function leState(L) {
+  const recs = latestRecs(), st = L.items.map(it => (recs.get(`le|${L.code}|${it.n}`) || {}).prod || '');
+  const live = st.filter(s => s !== 'huydon' && s !== 'huy');
+  if (!live.length) return 'huy';
+  if (L.ship === 'da') return 'gui';
+  return live.every(s => s === 'xong' || s === 'kho') ? 'cho' : 'lam';
+}
+const leCust = L => `${L.cust.name ? `<b>${esc(L.cust.name)}</b><br>` : ''}${esc(L.cust.phone)}`;
+const leItemsText = L => L.items.map(it => `${it.code ? it.code + (it.variant ? '-' + it.variant : '') : leItemKey(L, it) + ' (thiết kế)'} ${it.size.w}x${it.size.h} × ${it.qty}: ${money(it.price)}`);
 function shipAlert(list) {
-  alert(`CẦN TẠO ĐƠN GỬI HÀNG (${list.length} đơn lẻ đã xong):\n\n` + list.map(r =>
-    `${r.code} · ${r.w}x${r.h} × ${r.count}\nKhách: ${(r.cust && r.cust.name) || ''} ${r.cust ? r.cust.phone : ''}\nĐịa chỉ: ${r.cust ? r.cust.addr : ''}\nThu: ${money(r.price)}`).join('\n\n'));
+  alert(`CẦN TẠO ĐƠN GỬI HÀNG (${list.length} đơn lẻ đã xong):\n\n` + list.map(L =>
+    `${L.code} · Khách: ${L.cust.name || ''} ${L.cust.phone}\nĐịa chỉ: ${L.cust.addr}\n${leItemsText(L).join('\n')}\nThu: ${money(L.total)}${hasLabel(L.code) ? '\n(Đã có phiếu gửi, bấm In phiếu ở tab Đơn lẻ)' : ''}`).join('\n\n'));
 }
-function newLeCode() {
-  const used = new Set(S.records.map(r => r.code));
-  let c; do c = 'DL' + String(Math.floor(Math.random() * 1e5)).padStart(5, '0'); while (used.has(c));
-  return c;
+const initialOf = s => ((String(s).trim().split(/\s+/).pop() || 'X').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/gi, 'D').charAt(0) || 'X').toUpperCase();
+function newLeCode(by, phone) {
+  const base = initialOf(by) + phone.replace(/\D/g, '').slice(-4), used = new Set(S.le.filter(L => !L.del).map(L => L.code));
+  if (!used.has(base)) return base;
+  for (const ch of 'BCDEFGHJKLMNPQRSTUVWXYZ') if (!used.has(base + ch)) return base + ch;
+  return base + Date.now().toString(36).slice(-3).toUpperCase();
 }
-$('dlImg').addEventListener('change', e => {
-  dlFiles = [...e.target.files];
-  $('dlImgInfo').textContent = dlFiles.length ? `${dlFiles.length} ảnh: ${dlFiles.map(f => f.name).join(', ')}` : 'Chưa chọn ảnh';
-});
+let dlRows = [];
+const blankItem = () => ({ code: '', size: '', qty: 1, price: '', catId: '', note: '', files: [] });
+const dlCatOpts = sel => `<option value="">${esc(S.cat.common)} (chung)</option>` +
+  S.cat.list.filter(x => !x.linkOnly).map(x => `<option value="${x.id}" ${x.id === sel ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
+function dlRenderItems() {
+  if (!dlRows.length) dlRows.push(blankItem());
+  $('dlItems').innerHTML = dlRows.map((it, i) => `<tr>
+    <td>${i + 1}</td>
+    <td><input data-di="${i}" data-f="code" value="${esc(it.code)}" placeholder="NN268-1, để trống nếu thiết kế riêng" size="22" aria-label="Mã sản phẩm ${i + 1}"></td>
+    <td><input data-di="${i}" data-f="size" value="${esc(it.size)}" placeholder="40x60" size="7" aria-label="Kích thước ${i + 1}"></td>
+    <td class="num"><input data-di="${i}" data-f="qty" type="number" min="1" value="${it.qty}" style="width:60px" aria-label="Số lượng ${i + 1}"></td>
+    <td class="num"><input data-di="${i}" data-f="price" value="${esc(it.price)}" inputmode="numeric" placeholder="250.000" size="10" aria-label="Tiền sản phẩm ${i + 1}"></td>
+    <td><select data-di="${i}" data-f="catId" aria-label="Phân loại ${i + 1}">${dlCatOpts(it.catId)}</select></td>
+    <td><label class="link" style="cursor:pointer;padding:0"><input type="file" accept="image/png,image/jpeg" multiple hidden data-dif="${i}">${it.files.length ? it.files.length + ' ảnh' : 'Chọn ảnh'}</label></td>
+    <td><input data-di="${i}" data-f="note" value="${esc(it.note)}" size="14" aria-label="Ghi chú ${i + 1}"></td>
+    <td>${dlRows.length > 1 ? `<button class="link" data-drm="${i}">Bỏ</button>` : ''}</td></tr>`).join('');
+  document.querySelectorAll('[data-di]').forEach(el => el[el.tagName === 'SELECT' ? 'onchange' : 'oninput'] = () => { dlRows[+el.dataset.di][el.dataset.f] = el.value; dlUpdateSum(); });
+  document.querySelectorAll('[data-dif]').forEach(el => el.onchange = () => { dlRows[+el.dataset.dif].files = [...el.files]; dlRenderItems(); });
+  document.querySelectorAll('[data-drm]').forEach(b => b.onclick = () => { dlRows.splice(+b.dataset.drm, 1); dlRenderItems(); });
+  dlUpdateSum();
+}
+function dlUpdateSum() { $('dlSum').textContent = `Cộng tiền sản phẩm: ${money(dlRows.reduce((a, it) => a + digits(it.price), 0))}`; }
+$('dlAddItem').addEventListener('click', () => { dlRows.push(blankItem()); dlRenderItems(); });
 $('dlBy').addEventListener('change', e => kvSet('dlBy', e.target.value.trim()));
+async function syncLeFile(d) {
+  let other = [];
+  try { other = JSON.parse(await (await (await d.getFileHandle(LE_FILE)).getFile()).text()); } catch (_) { }
+  const before = JSON.stringify(S.le);
+  S.le = Core.mergeRecords(S.le, Array.isArray(other) ? other : []);
+  await kvSet('le', S.le);
+  const text = JSON.stringify(S.le);
+  if (text !== JSON.stringify(other)) await writeParts(d, LE_FILE, [text]);
+  return text !== before;
+}
+async function saveLe() {
+  await kvSet('le', S.le);
+  if (S.dst && await S.dst.queryPermission({ mode: 'readwrite' }) === 'granted') await syncLeFile(await subDir(S.dst, '_dulieu'));
+}
+/* mỗi sản phẩm của đơn lẻ thành một dòng trong danh sách đơn của máy này */
+function injectLe() {
+  const want = new Map();
+  for (const L of S.le) {
+    if (L.del) continue;
+    for (const it of L.items) {
+      const key = `le|${L.code}|${it.n}`;
+      want.set(key, { key, le: L.code, leId: L.id, leItem: it.n, orderId: L.code, orderDate: L.date,
+        variation: it.code ? it.code + (it.variant ? '-' + it.variant : '') : leItemKey(L, it),
+        code: it.code || '', variant: it.variant || null, size: it.size, qty: it.qty, pieces: 1, catId: it.catId || '', product: 'Đơn lẻ', imgKeyAlt: leItemKey(L, it) });
+    }
+  }
+  S.orders = S.orders.filter(o => !o.le || want.has(o.key));
+  const have = new Map(S.orders.filter(o => o.le).map(o => [o.key, o])), added = [];
+  for (const [k, w] of want) {
+    const o = have.get(k);
+    if (o) Object.assign(o, w); else { const n = { ...w, id: 'le:' + k }; S.orders.push(n); added.push(n); }
+  }
+  return added;
+}
 $('dlAdd').addEventListener('click', async () => {
-  const err = m => { $('dlErr').textContent = m; return null; };
-  $('dlErr').textContent = '';
-  const by = $('dlBy').value.trim(), phone = $('dlPhone').value.replace(/[^\d+]/g, ''), addr = $('dlAddr').value.trim(), size = Core.parseSizeText($('dlSize').value);
+  const err = m => { $('dlErr').textContent = m; };
+  $('dlErr').textContent = ''; $('dlInfo').textContent = '';
+  const by = $('dlBy').value.trim(), phone = $('dlPhone').value.replace(/[^\d+]/g, ''), addr = $('dlAddr').value.trim(), total = digits($('dlTotal').value);
   if (!by) return err('Hãy nhập tên người lên đơn.');
   if (!/^\+?\d{9,12}$/.test(phone)) return err('Số điện thoại chưa đúng.');
   if (!addr) return err('Hãy nhập địa chỉ.');
-  if (!size) return err('Kích thước chưa đúng, ví dụ 40x60.');
-  if (!dlFiles.length) return err('Hãy chọn ảnh tranh.');
-  if (!S.dst || !await ensurePerm(S.dst, 'readwrite')) return err('Hãy chọn hoặc kết nối thư mục lưu file cần in (thư mục chung) trước khi lên đơn lẻ.');
+  const items = [];
+  for (let i = 0; i < dlRows.length; i++) {
+    const it = dlRows[i];
+    if (!it.code.trim() && !it.size.trim() && !digits(it.price) && !it.files.length) continue;
+    const size = Core.parseSizeText(it.size);
+    if (!size) return err(`Sản phẩm ${i + 1}: kích thước chưa đúng, ví dụ 40x60.`);
+    let code = '', variant = null;
+    if (it.code.trim()) { const c = Core.parseCodeText(it.code); if (!c) return err(`Sản phẩm ${i + 1}: mã sản phẩm chưa đúng, ví dụ NN268-1. Không có mã thì để trống.`); code = c.code; variant = c.variant; }
+    const price = digits(it.price);
+    if (!price) return err(`Sản phẩm ${i + 1}: hãy nhập tiền sản phẩm.`);
+    items.push({ n: items.length + 1, code, variant, size, qty: Math.max(1, +it.qty || 1), price, catId: it.catId, note: it.note.trim(), files: it.files });
+  }
+  if (!items.length) return err('Hãy nhập ít nhất một sản phẩm.');
+  if (!total) return err('Hãy nhập tổng tiền đơn.');
+  if (!S.dst || !await ensurePerm(S.dst, 'readwrite')) return err('Hãy chọn hoặc kết nối thư mục chung (thư mục lưu file cần in) trước khi lên đơn lẻ.');
   $('dlAdd').disabled = true;
   try {
-    const code = newLeCode(), qty = Math.max(1, +$('dlQty').value || 1), cat = S.cat.list.find(c => c.id === $('dlCat').value) || null;
-    const sizeName = Core.sizeKey(size.w, size.h), dir = await subDir(await catRoot(cat), today(), sizeName), names = [];
-    for (let i = 0; i < dlFiles.length; i++) {
-      const f = dlFiles[i], ext = f.name.split('.').pop().toLowerCase();
-      const name = safe(`${code}${dlFiles.length > 1 ? '_tam' + (i + 1) : ''}_${sizeName}_SL${qty}.${ext}`);
-      await writeParts(dir, name, [f]); names.push(name);
-      try { await saveImg(imgId(imgKey(code), i + 1), f); } catch (_) { /* tif không xem trước được thì bỏ qua */ }
-    }
-    const o = { orderId: code, key: 'le|' + code, code, variant: null, variation: code, size, qty, pieces: 1 };
-    await record(o, 'Đơn lẻ', `${dirLabel(cat)}\\${today()}\\${sizeName}\\${names.join(', ')}`, {
-      kind: 'le', cust: { name: $('dlName').value.trim(), phone, addr }, price: +$('dlPrice').value.replace(/[^\d]/g, '') || 0,
-      note: $('dlNote').value.trim(), creator: by, creatorMachine: S.machine, catId: cat ? cat.id : '' });
-    for (const id of ['dlName', 'dlPhone', 'dlAddr', 'dlSize', 'dlPrice', 'dlNote']) $(id).value = '';
-    $('dlQty').value = 1; $('dlImg').value = ''; dlFiles = []; $('dlImgInfo').textContent = `Đã lên đơn ${code}. Chưa chọn ảnh cho đơn tiếp theo.`;
+    const code = newLeCode(by, phone);
+    const L = { id: crypto.randomUUID ? crypto.randomUUID() : String(Math.random()), t: Date.now(), date: today(), code, creator: by, creatorMachine: S.machine,
+      cust: { name: $('dlName').value.trim(), phone, addr }, total, note: $('dlNote').value.trim(), items: items.map(({ files, ...x }) => x) };
+    for (const it of items) { let no = 1; for (const f of it.files) { try { await saveImg(imgId(imgKey(leItemKey(L, it)), no++), f); } catch (_) { } } }
+    S.le.push(L); await saveLe();
+    const added = injectLe();
+    const sum = items.reduce((a, it) => a + it.price, 0);
+    for (const id of ['dlName', 'dlPhone', 'dlAddr', 'dlTotal', 'dlNote']) $(id).value = '';
+    dlRows = []; dlRenderItems();
+    $('dlInfo').textContent = `Đã lên đơn ${code} (${items.length} sản phẩm, ${money(total)})` + (sum !== total ? `. Lưu ý: tổng tiền đơn khác cộng tiền sản phẩm ${money(sum)}.` : '.');
     analyze();
+    await checkStock(added.filter(o => o.code));
   } catch (e) { err('Không lên được đơn: ' + e.message); }
   $('dlAdd').disabled = false;
 });
-function renderLe() {
-  const les = S.records.filter(r => !r.del && r.kind === 'le');
-  const ship = les.filter(r => leState(r) === 'cho').sort((a, b) => (a.prodT || 0) - (b.prodT || 0));
-  $('dlBadge').hidden = !ship.length; $('dlBadge').textContent = ship.length ? `${ship.length} chờ gửi` : '';
-  $('dlShip').innerHTML = ship.map(r => `<tr><td>${recThumb(r)}</td><td><b>${esc(r.code)}</b></td><td>${leCust(r)}</td><td>${esc(r.cust ? r.cust.addr : '')}</td><td>${r.w}x${r.h} × ${r.count}</td><td class="num">${money(r.price)}</td><td>${esc(leCreator(r))}</td><td>${fmtT(r.prodT)}</td>
-    <td class="noprint"><button class="main" data-ship="${r.id}">Đã tạo đơn gửi</button></td></tr>`).join('') || '<tr><td colspan="9" class="note">Không có đơn nào chờ gửi.</td></tr>';
-  const kind = $('dlKind').value, a = $('dlFrom').value, b = $('dlTo').value, per = {};
-  for (const r of les) {
-    if ((a && r.date < a) || (b && r.date > b)) continue;
-    const st = leState(r), k = `${Core.periodKey(r.date, kind)}|${leCreator(r)}`;
-    const P = per[k] = per[k] || { period: Core.periodKey(r.date, kind), who: leCreator(r), n: 0, pcs: 0, money: 0, lam: 0, cho: 0, gui: 0, huy: 0 };
-    P.n++; P[st]++;
-    if (st !== 'huy') { P.pcs += r.count; P.money += r.price || 0; }
+
+/* ---- thiết kế đơn lẻ: tìm file tên bắt đầu bằng mã sản phẩm trong thư mục thiết kế, chép vào thư mục chờ in ---- */
+const designPath = () => S.cat.designDir || 'Thiet ke don le';
+const designLabel = () => `${S.dst ? S.dst.name : '(thư mục chung)'}\\${designPath().replace(/\//g, '\\')}`;
+async function designDone(o, picked) {
+  if (!S.dst || !await ensurePerm(S.dst, 'readwrite')) { alert('Hãy chọn hoặc kết nối thư mục chung trước.'); return; }
+  const pre = o.imgKeyAlt, re = new RegExp('^' + pre.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![0-9])', 'i');
+  const files = picked ? [...picked] : [];
+  if (!files.length) {
+    const d = await subDir(S.dst, ...designPath().split('/').filter(Boolean));
+    for await (const [p, h] of walk(d)) { const n = p.split('/').pop(); if (re.test(n) && /\.(tiff?|jpe?g|png|webp|psd|pdf)$/i.test(n)) files.push(await h.getFile()); }
+    if (!files.length) {
+      alert(`Chưa thấy file thiết kế tên bắt đầu bằng “${pre}” trong thư mục ${designLabel()}.\n\nHãy lưu file đúng tên (ví dụ ${pre}.jpg, ${pre}_2.tif) rồi bấm lại, hoặc bấm “Chọn file thiết kế…”.`);
+      return;
+    }
   }
-  const rows = Object.values(per).sort((x, y) => y.period.localeCompare(x.period) || y.money - x.money);
-  $('dlStats').innerHTML = rows.map(p => `<tr><td>${labelPeriod(p.period, kind)}</td><td>${esc(p.who)}</td><td class="num">${p.n}</td><td class="num">${p.pcs}</td><td class="num"><b>${money(p.money)}</b></td><td class="num">${p.lam}</td><td class="num">${p.cho}</td><td class="num">${p.gui}</td><td class="num">${p.huy}</td></tr>`).join('')
+  try {
+    const cat = catOf(o), sizeName = Core.sizeKey(o.size.w, o.size.h), dir = await subDir(await catRoot(cat), today(), sizeName), names = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i], name = safe(`${pre}${files.length > 1 ? '_tam' + (i + 1) : ''}_${sizeName}_SL${o.qty}.${f.name.split('.').pop().toLowerCase()}`);
+      await writeParts(dir, name, [f]); names.push(name);
+    }
+    o.outName = names.join(', ');
+    await record(o, 'Thiết kế', `${dirLabel(cat)}\\${today()}\\${sizeName}\\${names.join(', ')}`);
+    analyze();
+  } catch (e) { alert('Không chép được file thiết kế: ' + e.message); }
+}
+$('designPick').addEventListener('click', async () => {
+  if (!S.dst) { alert('Hãy chọn thư mục lưu file cần in (thư mục chung) ở tab Đơn hàng trước.'); return; }
+  if (!await askAdmin('Chọn thư mục thiết kế đơn lẻ. Thay đổi áp dụng cho mọi máy.')) return;
+  try {
+    const h = await showDirectoryPicker({ id: 'thietke', mode: 'readwrite', startIn: S.dst });
+    const parts = await S.dst.resolve(h);
+    if (!parts || !parts.length) { alert(`Hãy chọn một thư mục bên trong thư mục chung “${S.dst.name}”.`); return; }
+    S.cat.designDir = parts.join('/'); await saveCat();
+  } catch (e) { if (e.name !== 'AbortError') alert(e.message); }
+});
+
+/* ---- phiếu gửi hàng: mỗi đơn một file ở _dulieu/phieu, in được khi sản xuất đã xong ---- */
+const labelKey = id => safe(String(id));
+const hasLabel = id => !!id && S.labels.has(labelKey(id));
+const orderDone = id => {
+  const rs = S.records.filter(r => !r.del && r.orderId === id && r.prod !== 'huydon');
+  return rs.length > 0 && rs.every(r => ['xong', 'kho', 'huy'].includes(r.prod)) && rs.some(r => r.prod === 'xong' || r.prod === 'kho')
+    && !S.orders.some(o => o.orderId === id && !['finished', 'taken'].includes(o.status));
+};
+async function syncLabels(d) {
+  const pd = await d.getDirectoryHandle('phieu', { create: true }), m = new Map();
+  for await (const [name, h] of pd.entries()) if (h.kind === 'file') m.set(name.replace(/\.[^.]+$/, ''), h);
+  S.labels = m;
+}
+async function saveLabel(id, file) {
+  if (!S.dst || !await ensurePerm(S.dst, 'readwrite')) throw new Error('chưa kết nối thư mục chung');
+  const pd = await subDir(S.dst, '_dulieu', 'phieu'), base = labelKey(id), ext = (file.name.split('.').pop() || 'pdf').toLowerCase();
+  for await (const [name] of pd.entries()) if (name.replace(/\.[^.]+$/, '') === base) await pd.removeEntry(name).catch(() => { });
+  await writeParts(pd, `${base}.${ext}`, [file]);
+  S.labels.set(base, await pd.getFileHandle(`${base}.${ext}`));
+}
+async function printLabel(id) {
+  const h = S.labels.get(labelKey(id)); if (!h) return;
+  const f = await h.getFile(), url = URL.createObjectURL(f);
+  if (/pdf$/i.test(f.name) || f.type === 'application/pdf') { window.open(url, '_blank'); return; }
+  const w = window.open('', '_blank');
+  if (!w) { alert('Trình duyệt chặn cửa sổ in, hãy cho phép cửa sổ bật lên.'); return; }
+  w.document.write(`<title>Phiếu gửi ${esc(id)}</title><style>@page{margin:0}body{margin:0}img{width:100%}</style><img src="${url}" onload="setTimeout(()=>print(),200)">`);
+  w.document.close();
+}
+const labelCell = id => !id ? '' : `<div class="noprint" style="margin-top:4px">${hasLabel(id)
+  ? `<span class="tag ok">Có phiếu gửi</span> ${orderDone(id) ? `<button class="link" data-plp="${esc(id)}">In phiếu</button>` : '<span class="note">in được khi sản xuất xong</span>'}<br>` : ''}
+  <label class="link" style="cursor:pointer;padding:0;font-size:12px"><input type="file" accept="application/pdf,image/png,image/jpeg" hidden data-pl="${esc(id)}">${hasLabel(id) ? 'Đổi phiếu' : 'Tải phiếu gửi'}</label></div>`;
+document.addEventListener('change', async e => {
+  const i = e.target; if (!i.dataset || !i.dataset.pl || !i.files[0]) return;
+  try { await saveLabel(i.dataset.pl, i.files[0]); } catch (err) { alert('Không lưu được phiếu gửi: ' + err.message); }
+  i.value = ''; renderOrders(); renderProd();
+});
+document.addEventListener('click', e => { const b = e.target.closest && e.target.closest('[data-plp]'); if (b) printLabel(b.dataset.plp); });
+
+function renderLe() {
+  const les = S.le.filter(L => !L.del);
+  const ship = les.filter(L => leState(L) === 'cho').sort((a, b) => a.t - b.t);
+  $('dlBadge').hidden = !ship.length; $('dlBadge').textContent = ship.length ? `${ship.length} chờ gửi` : '';
+  $('dlShip').innerHTML = ship.map(L => `<tr><td><b>${esc(L.code)}</b></td><td>${leCust(L)}</td><td>${esc(L.cust.addr)}</td><td>${leItemsText(L).map(esc).join('<br>')}</td><td class="num"><b>${money(L.total)}</b></td><td>${esc(leCreator(L))}</td>
+    <td>${labelCell(L.code)}</td><td class="noprint"><button class="main" data-ship="${L.id}">Đã tạo đơn gửi</button></td></tr>`).join('')
+    || '<tr><td colspan="8" class="note">Không có đơn nào chờ gửi.</td></tr>';
+  const kind = $('dlKind').value, a = $('dlFrom').value, b = $('dlTo').value, per = {};
+  for (const L of les) {
+    if ((a && L.date < a) || (b && L.date > b)) continue;
+    const st = leState(L), p = Core.periodKey(L.date, kind), k = `${p}|${leCreator(L)}`;
+    const P = per[k] = per[k] || { period: p, who: leCreator(L), n: 0, pcs: 0, money: 0, lam: 0, cho: 0, gui: 0, huy: 0 };
+    P.n++; P[st]++;
+    if (st !== 'huy') { P.pcs += L.items.reduce((s, it) => s + it.qty, 0); P.money += L.total || 0; }
+  }
+  $('dlStats').innerHTML = Object.values(per).sort((x, y) => y.period.localeCompare(x.period) || y.money - x.money).map(p => `<tr><td>${labelPeriod(p.period, kind)}</td><td>${esc(p.who)}</td><td class="num">${p.n}</td><td class="num">${p.pcs}</td><td class="num"><b>${money(p.money)}</b></td><td class="num">${p.lam}</td><td class="num">${p.cho}</td><td class="num">${p.gui}</td><td class="num">${p.huy}</td></tr>`).join('')
     || '<tr><td colspan="9" class="note">Chưa có đơn lẻ nào.</td></tr>';
   const q = $('dlQ').value.trim().toLowerCase();
-  const list = les.filter(r => !q || [r.code, r.cust && r.cust.phone, r.cust && r.cust.name, r.cust && r.cust.addr].join(' ').toLowerCase().includes(q)).sort((x, y) => y.t - x.t).slice(0, 300);
-  $('dlRows').innerHTML = list.map(r => { const [c, l] = LE_ST[leState(r)];
-    return `<tr><td>${recThumb(r)}</td><td>${esc(r.date.split('-').reverse().join('/'))}</td><td><b>${esc(r.code)}</b></td><td>${leCust(r)}</td><td>${esc(r.cust ? r.cust.addr : '')}${r.note ? `<div class="note">${esc(r.note)}</div>` : ''}</td>
-      <td>${r.w}x${r.h} × ${r.count}</td><td class="num">${money(r.price)}</td><td>${esc(leCreator(r))}</td><td><span class="tag ${c}">${l}</span>${r.shipCode ? `<div class="note">Vận đơn: ${esc(r.shipCode)}</div>` : ''}</td></tr>`; }).join('')
-    || '<tr><td colspan="9" class="note">Chưa có đơn lẻ nào.</td></tr>';
+  $('dlRows').innerHTML = les.filter(L => !q || [L.code, L.cust.phone, L.cust.name, L.cust.addr].join(' ').toLowerCase().includes(q)).sort((x, y) => y.t - x.t).slice(0, 300).map(L => {
+    const [c, l] = LE_ST[leState(L)];
+    return `<tr><td>${esc(L.date.split('-').reverse().join('/'))}</td><td><b>${esc(L.code)}</b></td><td>${leCust(L)}</td><td>${esc(L.cust.addr)}${L.note ? `<div class="note">${esc(L.note)}</div>` : ''}</td>
+      <td>${leItemsText(L).map(esc).join('<br>')}</td><td class="num">${money(L.total)}</td><td>${esc(leCreator(L))}</td>
+      <td><span class="tag ${c}">${l}</span>${L.shipCode ? `<div class="note">Vận đơn: ${esc(L.shipCode)}</div>` : ''}</td><td>${labelCell(L.code)}</td></tr>`;
+  }).join('') || '<tr><td colspan="9" class="note">Chưa có đơn lẻ nào.</td></tr>';
   document.querySelectorAll('[data-ship]').forEach(btn => btn.onclick = async () => {
-    const r = S.records.find(x => x.id === btn.dataset.ship);
-    const code = prompt(`Đã tạo đơn gửi cho ${r.code}. Nhập mã vận đơn (có thể để trống):`, '');
+    const L = S.le.find(x => x.id === btn.dataset.ship);
+    const code = prompt(`Đã tạo đơn gửi cho ${L.code}. Nhập mã vận đơn (có thể để trống):`, '');
     if (code === null) return;
-    Object.assign(r, { ship: 'da', shipCode: code.trim(), shipT: Date.now(), shipBy: S.machine, t: Date.now() });
-    await saveStats(); analyze();
+    Object.assign(L, { ship: 'da', shipCode: code.trim(), shipT: Date.now(), shipBy: S.machine, t: Date.now() });
+    await saveLe(); analyze();
   });
-  /* đơn lẻ do máy này lên mà máy khác vừa bấm Đã xong: báo một lần */
-  const fresh = ship.filter(r => r.creatorMachine === S.machine && !S.leSeen.has(r.id));
-  if (fresh.length) { fresh.forEach(r => S.leSeen.add(r.id)); kvSet('leSeen', [...S.leSeen]); setTimeout(() => shipAlert(fresh), 0); }
+  /* đơn lẻ do máy này lên mà máy khác vừa làm xong: báo một lần */
+  const fresh = ship.filter(L => L.creatorMachine === S.machine && !S.leSeen.has(L.id));
+  if (fresh.length) { fresh.forEach(L => S.leSeen.add(L.id)); kvSet('leSeen', [...S.leSeen]); setTimeout(() => shipAlert(fresh), 0); }
 }
 for (const id of ['dlKind', 'dlFrom', 'dlTo']) $(id).addEventListener('change', renderLe);
 $('dlQ').addEventListener('input', renderLe);
@@ -1370,9 +1536,8 @@ function renderCat() {
   const keep = $('mCat').value;
   $('mCat').innerHTML = '<option value="">Chưa phân loại</option>' + c.list.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('');
   $('mCat').value = c.list.some(x => x.id === keep) ? keep : '';
-  const keepDl = $('dlCat').value;
-  $('dlCat').innerHTML = `<option value="">${esc(c.common)} (thư mục chung)</option>` + c.list.filter(x => !x.linkOnly).map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('');
-  $('dlCat').value = c.list.some(x => x.id === keepDl) ? keepDl : '';
+  $('designDirLbl').textContent = designLabel();
+  if (!document.activeElement || !document.activeElement.closest('#dlItems')) dlRenderItems();
   const find = id => c.list.find(x => x.id === id);
   document.querySelectorAll('[data-cn]').forEach(i => i.onchange = () => { find(i.dataset.cn).name = i.value.trim() || 'Phân loại'; saveCat(); });
   document.querySelectorAll('[data-ck]').forEach(i => i.onchange = () => { find(i.dataset.ck).kw = i.value; saveCat(); });
@@ -1507,7 +1672,12 @@ const groupStrip = G => {
   const ks = []; for (const it of G.items) { const k = itemImgKey(it.k); if (hasImg(k) && !ks.includes(k)) ks.push(k); if (ks.length >= 6) break; }
   return ks.length ? `<div class="row" style="gap:6px;margin-top:6px">${ks.map(k => imgTag(k, k)).join('')}</div>` : '';
 };
-const rowThumb = o => { const k = imgLookup(o); return k ? imgTag(k, codeLabel(o)) : S.cfg.khoThumb ? thumbTag(previewRel(o), codeLabel(o)) : ''; };
+/* ô mã đơn của dòng đơn lẻ: mã, khách, tiền sản phẩm */
+const leCell = o => {
+  const L = leOf(o), it = L && L.items.find(x => x.n === o.leItem);
+  return `<b>${esc(o.orderId)}</b> <span class="tag mut">đơn lẻ</span>${L ? `<div class="note">${esc(L.cust.name || L.cust.phone)}${it ? ` · ${money(it.price)}` : ''}</div>` : ''}`;
+};
+const rowThumb = o => { const k = (o.imgKeyAlt && hasImg(imgKey(o.imgKeyAlt)) ? imgKey(o.imgKeyAlt) : '') || imgLookup(o); return k ? imgTag(k, codeLabel(o)) : S.cfg.khoThumb ? thumbTag(previewRel(o), codeLabel(o)) : ''; };
 async function imgBlob(id) {
   const h = S.imgRemote.get(id);
   if (h) try { return await h.getFile(); } catch (_) { }
@@ -1706,6 +1876,9 @@ async function syncShared() {
       } catch (_) { }
       if (S.cat.t && S.cat.t > remoteT) await writeParts(d, 'phanloai.json', [JSON.stringify(S.cat)]);
       try { const before = S.imgRemote.size; await syncImgs(d); if (S.imgRemote.size !== before) renderProducts(); } catch (e) { console.warn(e); }
+      try { await syncLabels(d); } catch (e) { console.warn(e); }
+      /* đơn lẻ máy khác vừa lên: thêm vào danh sách đơn của máy này */
+      try { if (await syncLeFile(d)) setTimeout(analyze, 0); } catch (e) { console.warn(e); }
       for await (const [name, h] of d.entries()) {
         if (name === mine || !/^may-.*\.json$/.test(name)) continue;
         try { files.push(JSON.parse(await (await h.getFile()).text())); } catch (_) { }
@@ -1756,8 +1929,8 @@ function renderDesign() {
     <td><input data-nm="${esc(m.id)}" value="${esc(sh.names[m.id] ? sh.names[m.id].name : '')}" placeholder="Nhập tên" size="16" aria-label="Người thiết kế của ${esc(m.id)}"></td></tr>`).join('');
   document.querySelectorAll('[data-nm]').forEach(i => i.onchange = () => { S.mine.names[i.dataset.nm] = { name: i.value.trim(), t: Date.now() }; i.blur(); syncShared(); });
 }
-const TAGS = { taken: ['mut', 'Đã lấy lần trước, bỏ qua'], done: ['ok', 'Đã lấy file'], ok: ['ok', 'Có sẵn đúng cỡ'], resize: ['warn', 'Sẽ chỉnh kích thước'], review: ['warn', 'Cần xem lại'], missing: ['err', 'Không tìm thấy file'], wait: ['mut', 'Chờ chọn thư mục'], fail: ['err', 'Lỗi khi lấy file'] };
-const FILTERS = [['all', 'Tất cả', ''], ['done', 'Đã lấy file', 'ok'], ['ready', 'Sẵn sàng lấy', 'ok'], ['review', 'Cần xem lại', 'warn'], ['missing', 'Không tìm thấy', 'err']];
+const TAGS = { design: ['warn', 'Chờ thiết kế'], taken: ['mut', 'Đã lấy lần trước, bỏ qua'], done: ['ok', 'Đã lấy file'], ok: ['ok', 'Có sẵn đúng cỡ'], resize: ['warn', 'Sẽ chỉnh kích thước'], review: ['warn', 'Cần xem lại'], missing: ['err', 'Không tìm thấy file'], wait: ['mut', 'Chờ chọn thư mục'], fail: ['err', 'Lỗi khi lấy file'] };
+const FILTERS = [['all', 'Tất cả', ''], ['done', 'Đã lấy file', 'ok'], ['ready', 'Sẵn sàng lấy', 'ok'], ['review', 'Cần xem lại', 'warn'], ['design', 'Chờ thiết kế', 'warn'], ['missing', 'Không tìm thấy', 'err']];
 const FILTER_ST = { ready: ['ok', 'resize'], missing: ['missing', 'fail'], done: ['done', 'taken'] };
 /* đơn đã chỉnh trạng thái sản xuất (finished) không hiện ở Phân tích đơn nữa */
 const inFilter = (o, f) => o.status !== 'finished' && (f === 'all' || (FILTER_ST[f] || [f]).includes(o.status));
@@ -1776,7 +1949,7 @@ function renderOrders() {
     const cat = catOf(o), lo = cat && cat.linkOnly;
     const [cls, label] = lo && ['ok', 'resize'].includes(o.status) ? ['ok', 'Sẵn sàng, chỉ ghi đường dẫn'] : TAGS[o.status] || TAGS.wait;
     return `<tr>
-      <td>${esc(o.orderDate)}</td><td>${isAuto(o) ? 'Nhập tay' : `<b title="${esc(o.orderId)}">${esc(shortId(o.orderId))}</b>`}</td>
+      <td>${esc(o.orderDate)}</td><td>${o.le ? leCell(o) : isAuto(o) ? 'Nhập tay' : `<b title="${esc(o.orderId)}">${esc(shortId(o.orderId))}</b>`}${isAuto(o) ? '' : labelCell(o.orderId)}</td>
       <td>${o.code ? `<b>${esc(codeLabel(o))}</b>` : `<input data-code="${o.id}" placeholder="Nhập mã" size="9" style="padding:2px 4px">`}${o.gift ? ' <span class="tag mut">tặng</span>' : ''}<div class="note">${esc(o.variation)}</div><div class="note">${esc(cat ? cat.name : S.cat.common)} → ${lo ? 'chỉ ghi đường dẫn' : esc(dirLabel(cat))}</div></td>
       <td>${o.size ? Core.sizeKey(o.size.w, o.size.h) : `<input data-size="${o.id}" placeholder="40x60" size="6" style="padding:2px 4px">`}</td>
       <td class="num">${o.qty}</td>
@@ -1784,7 +1957,8 @@ function renderOrders() {
       <td>${rowThumb(o)}<label class="link noprint" style="cursor:pointer;font-size:12px;padding:0;white-space:nowrap"><input type="file" accept="image/png,image/jpeg" multiple hidden data-upo="${o.id}">+ Thêm ảnh</label></td>
       <td><span class="path">${file}</span>${sel}${o.warn ? `<div class="warnline">${esc(o.warn)}</div>` : ''}</td>
       <td><span class="tag ${cls}">${label}</span>${m && m.note && o.status !== 'done' ? `<div class="note">${esc(m.note)}</div>` : ''}${o.err ? `<div class="err">${esc(o.err)}</div>` : ''}${o.status === 'missing' && o.code ? (S.shared.live[Core.modelKey(o)] ? '<div class="note"><span class="tag ok">Thiết kế đã xác nhận</span> Bấm Quét lại kho để lấy file</div>' : `<div style="margin-top:4px" class="noprint"><button class="link" data-cfo="${esc(Core.modelKey(o))}" data-n="${Math.round(o.pieces)}">Xác nhận đã có file</button></div>`) : ''}</td>
-      <td class="noprint" style="white-space:nowrap">${o.status === 'done'
+      <td class="noprint" style="white-space:nowrap">${o.status === 'design'
+        ? `<button class="link" data-dz="${o.id}">Đã thiết kế xong</button><br><label class="link" style="cursor:pointer;padding:2px 4px"><input type="file" accept="image/*,.tif,.tiff,.psd,.pdf" multiple hidden data-dzf="${o.id}">Chọn file thiết kế…</label><br>` : ''}${o.status === 'done'
         ? `<button class="link" data-px="${o.id}" data-v="xong">Đã xong</button><br><button class="link" data-px="${o.id}" data-v="huy">Xong mà hủy</button><br>`
         : ''}<button class="link" data-px="${o.id}" data-v="huydon">Hủy đơn</button></td></tr>`;
   }).join('');
@@ -1795,6 +1969,8 @@ function renderOrders() {
   document.querySelectorAll('[data-copy]').forEach(b => b.onclick = () => copyText(b.dataset.copy, b));
   $('copyLinks').hidden = !S.orders.some(o => o.links && o.status === 'done');
   document.querySelectorAll('[data-cfo]').forEach(b => b.onclick = () => confirmModel(b.dataset.cfo, +b.dataset.n));
+  document.querySelectorAll('[data-dz]').forEach(b => b.onclick = () => designDone(S.orders.find(x => x.id === b.dataset.dz)));
+  document.querySelectorAll('[data-dzf]').forEach(i => i.onchange = () => { if (i.files.length) designDone(S.orders.find(x => x.id === i.dataset.dzf), i.files); });
   document.querySelectorAll('[data-upo]').forEach(i => i.onchange = async () => {
     const o = S.orders.find(x => x.id === i.dataset.upo);
     /* ảnh nhập từ dòng đơn lưu theo mã tranh, để mọi cỡ của mẫu này cùng dùng */
@@ -1920,7 +2096,7 @@ $('run').addEventListener('click', async () => {
     $('progTxt').textContent = `${i}/${todo.length}: ${codeLabel(o)} ${Core.sizeKey(o.size.w, o.size.h)}`;
     $('progBar').style.width = (i / todo.length * 100) + '%';
     try {
-      const sizeName = Core.sizeKey(o.size.w, o.size.h), order = isAuto(o) ? 'tay' : shortId(o.orderId), cat = catOf(o);
+      const sizeName = Core.sizeKey(o.size.w, o.size.h), order = isAuto(o) ? 'tay' : o.le ? o.orderId : shortId(o.orderId), cat = catOf(o);
       /* phân loại chỉ ghi đường dẫn (vd fomex): không chép, chỉ lưu đường dẫn file trong kho */
       if (cat && cat.linkOnly) {
         o.links = o.match.files.map(f => fullPath(f.rel));
