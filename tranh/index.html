@@ -112,7 +112,7 @@ tr.late>td:first-child{box-shadow:inset 4px 0 0 var(--err)}
 <div id="app" hidden>
 <header>
   <h1>Lấy file <span>in tranh</span></h1>
-  <span class="note" title="Không thấy tính năng mới thì bấm Ctrl + F5">Bản 04/11/2026 · 3</span>
+  <span class="note" title="Không thấy tính năng mới thì bấm Ctrl + F5">Bản 04/11/2026 · 4</span>
   <nav role="tablist">
     <button role="tab" data-tab="don" aria-selected="true">Đơn hàng</button>
     <button role="tab" data-tab="dl" aria-selected="false">Đơn lẻ <span class="tag err" id="dlBadge" hidden></span></button>
@@ -1186,11 +1186,20 @@ async function setProd(r, v) {
   const L = isLeRec(r) && S.le.find(x => !x.del && x.code === r.orderKey.split('|')[1]);
   if (L && leState(L) === 'cho') { S.leSeen.add(L.id); kvSet('leSeen', [...S.leSeen]); shipAlert([L]); }
 }
+/* đơn đặt trước ngày 04/11/2026 thường đã làm ngoài app: cho chỉnh trạng thái kể cả khi chưa lấy file qua app */
+const OLD_CUTOFF = '2026-11-04';
+const isOldOrder = o => !o.le && !!o.orderDate && o.orderDate < OLD_CUTOFF;
 async function setOrderProd(o, v) {
-  if (v === 'huydon' && !confirm(`Hủy đơn ${isAuto(o) ? 'nhập tay' : shortId(o.orderId)}: ${codeLabel(o)}?`)) return;
+  const label = `${isAuto(o) ? 'nhập tay' : shortId(o.orderId)}: ${codeLabel(o)}`;
+  if (v === 'huydon' && !confirm(`Hủy đơn ${label}?`)) return;
   const r = latestRecs().get(o.key);
   if (r && !r.prod && !o.retake) await setProd(r, v);
   else if (v === 'huydon') await record(o, 'Hủy đơn', '', { prod: 'huydon', prodT: Date.now(), prodBy: S.machine });
+  else if (isOldOrder(o)) {
+    if (!confirm(`Đơn ${label} đặt ngày ${o.orderDate.split('-').reverse().join('/')}, chưa lấy file qua app.\nĐánh dấu “${PROD[v][1]}”?`)) return;
+    /* ghi vào thống kê theo ngày đặt của đơn, không dồn vào hôm nay */
+    await record(o, 'Đơn cũ, làm ngoài app', '', { prod: v, prodT: Date.now(), prodBy: S.machine, date: o.orderDate, stockUsed: v === 'huy' ? 0 : undefined });
+  }
   delete o.retake;
   analyze();
 }
@@ -1259,7 +1268,7 @@ function renderProd() {
     if (r.prod === 'kho') {
       for (const f of r.from || []) { const s = rec(f.id); if (s) { s.stockUsed = Math.max(0, (s.stockUsed || 0) - f.n); s.t = Date.now(); } }
       r.del = true; r.t = Date.now(); await saveStats();
-    } else if (r.source === 'Hủy đơn') { r.del = true; r.t = Date.now(); await saveStats(); }
+    } else if (r.source === 'Hủy đơn' || r.source === 'Đơn cũ, làm ngoài app') { r.del = true; r.t = Date.now(); await saveStats(); }
     else await setProd(r, '');
     analyze();
   });
@@ -2027,7 +2036,7 @@ function renderOrders() {
       <td><span class="path">${file}</span>${sel}${o.warn ? `<div class="warnline">${esc(o.warn)}</div>` : ''}</td>
       <td><span class="tag ${cls}">${label}</span>${m && m.note && o.status !== 'done' ? `<div class="note">${esc(m.note)}</div>` : ''}${o.err ? `<div class="err">${esc(o.err)}</div>` : ''}${o.status === 'missing' && o.code ? (S.shared.live[Core.modelKey(o)] ? '<div class="note"><span class="tag ok">Thiết kế đã xác nhận</span> Bấm Quét lại kho để lấy file</div>' : `<div style="margin-top:4px" class="noprint"><button class="link" data-cfo="${esc(Core.modelKey(o))}" data-n="${Math.round(o.pieces)}">Xác nhận đã có file</button></div>`) : ''}</td>
       <td class="noprint" style="white-space:nowrap">${o.status === 'design'
-        ? `<button class="link" data-dz="${o.id}">Đã thiết kế xong</button><br><label class="link" style="cursor:pointer;padding:2px 4px"><input type="file" accept="image/*,.tif,.tiff,.psd,.pdf" multiple hidden data-dzf="${o.id}">Chọn file thiết kế…</label><br>` : ''}${o.status === 'done'
+        ? `<button class="link" data-dz="${o.id}">Đã thiết kế xong</button><br><label class="link" style="cursor:pointer;padding:2px 4px"><input type="file" accept="image/*,.tif,.tiff,.psd,.pdf" multiple hidden data-dzf="${o.id}">Chọn file thiết kế…</label><br>` : ''}${o.status === 'done' || (isOldOrder(o) && o.status !== 'taken')
         ? `<button class="link" data-px="${o.id}" data-v="xong">Đã xong</button><br><button class="link" data-px="${o.id}" data-v="huy">Xong mà hủy</button><br>`
         : ''}<button class="link" data-px="${o.id}" data-v="huydon">Hủy đơn</button></td></tr>`;
   }).join('');
