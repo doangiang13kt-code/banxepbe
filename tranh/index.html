@@ -113,7 +113,7 @@ tr.late>td:first-child{box-shadow:inset 4px 0 0 var(--err)}
 <div id="app" hidden>
 <header>
   <h1>Lấy file <span>in tranh</span></h1>
-  <span class="note" title="Không thấy tính năng mới thì bấm Ctrl + F5">Bản 04/11/2026 · 5</span>
+  <span class="note" title="Không thấy tính năng mới thì bấm Ctrl + F5">Bản 04/11/2026 · 6</span>
   <nav role="tablist">
     <button role="tab" data-tab="don" aria-selected="true">Đơn hàng</button>
     <button role="tab" data-tab="dl" aria-selected="false">Đơn lẻ <span class="tag err" id="dlBadge" hidden></span></button>
@@ -1148,14 +1148,20 @@ function latestRecs() {
 function analyze() {
   injectLe();
   const ready = Object.keys(S.index).length > 0;
-  const recs = latestRecs();
+  /* bản trước tự đánh dấu “đã lấy file” tới 16h00: trả lại các đơn từ 8h30 trở đi mà sản xuất chưa chỉnh trạng thái */
   let autoTaken = 0;
+  for (const r of S.records) {
+    if (r.del || r.prod || r.source !== AUTO_TAKEN_SRC) continue;
+    const o = S.orders.find(x => x.key === r.orderKey), at = r.orderAt || (o && o.orderAt) || '';
+    if (at.length >= 16 && at >= PRE_TAKEN) { r.del = true; r.t = Date.now(); autoTaken++; }
+  }
+  const recs = latestRecs();
   for (const o of S.orders) {
     if (!o.addedT) o.addedT = o.le ? ((leOf(o) || {}).t || Date.now()) : Date.now();
     let r = recs.get(o.key);
     /* đơn đặt trước 16h00 03/11/2026: tự ghi “đã lấy file” (theo ngày đặt), sang thẳng Đang làm */
     if (!r && o.retake === undefined && preTaken(o)) {
-      r = makeRecord(o, 'Đơn cũ, coi như đã lấy file', '', { date: o.orderDate });
+      r = makeRecord(o, AUTO_TAKEN_SRC, '', { date: o.orderDate, orderAt: o.orderAt || '' });
       S.records.push(r); recs.set(o.key, r); autoTaken++;
     }
     /* đã chỉnh trạng thái sản xuất (xong, xong mà hủy, hủy đơn, lấy tồn kho): rời Phân tích đơn */
@@ -1198,8 +1204,9 @@ async function setProd(r, v) {
 /* đơn đặt trước ngày 04/11/2026 thường đã làm ngoài app: cho chỉnh trạng thái kể cả khi chưa lấy file qua app */
 const OLD_CUTOFF = '2026-11-04';
 const isOldOrder = o => !o.le && !!o.orderDate && o.orderDate < OLD_CUTOFF;
-/* đơn Shopee đặt trước 16h00 ngày 03/11/2026: coi như đã lấy file, không lấy file qua app nữa */
-const PRE_TAKEN = '2026-11-03 16:00';
+/* đơn Shopee đặt trước 8h30 ngày 03/11/2026: coi như đã lấy file, không lấy file qua app nữa; từ 8h30 trở đi là chưa lấy file */
+const PRE_TAKEN = '2026-11-03 08:30';
+const AUTO_TAKEN_SRC = 'Đơn cũ, coi như đã lấy file';
 const preTaken = o => !o.le && !isAuto(o) && (o.orderAt && o.orderAt.length >= 16 ? o.orderAt < PRE_TAKEN : !!o.orderDate && o.orderDate < PRE_TAKEN.slice(0, 10));
 /* trạng thái theo cả đơn: mọi mã tranh còn đang xử lý của cùng mã đơn */
 const orderLines = id => S.orders.filter(o => o.orderId === id && !['finished', 'taken'].includes(o.status));
