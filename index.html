@@ -589,6 +589,14 @@ $('machine').addEventListener('change', () => {
 
 // độ đục (0-255) từ đó điểm ảnh được tính là phần hình: 70% (người dùng chọn); vùng mờ hơn không tính vào đường cắt và kênh Spot1
 const ALPHA_MIN = 179;
+// kết quả đường cắt đã tính của từng file ảnh (theo cỡ + thông số cắt): xếp lại không phải giải mã, tính lại
+const GEO = new WeakMap();
+function remember(f, key, g) {
+  if (!f.file) return;
+  if (!GEO.has(f.file)) GEO.set(f.file, new Map());
+  const m = GEO.get(f.file); if (m.size > 6) m.clear();
+  m.set(key, { thumb: f.thumb, loops: g.loops, occ: g.occ });
+}
 async function buildGeometry(p) {
   // kích thước thật (mm) của từng file
   for (const f of S.files) {
@@ -604,22 +612,30 @@ async function buildGeometry(p) {
   let r = 0.25; while (((w + 2 * P) / r) * ((h + 2 * P) / r) > 4e6) r *= 1.25;
   const fk = Math.max(1, Math.round(0.5 / r)), pres = fk * r;
   const cache = new Map();
+  // mỗi file có ô riêng theo đúng kích thước của nó; file nào chưa có sẵn kết quả thì giải mã ảnh song song ngay từ đầu
+  const jobs = S.files.map(f => {
+    const gwc = Math.ceil((f.w + 2 * P) / pres), ghc = Math.ceil((f.h + 2 * P) / pres), gw = gwc * fk, gh = ghc * fk;
+    const bw = Math.max(1, Math.round(f.w / r)), bh = Math.max(1, Math.round(f.h / r));
+    const key = [bw, bh, gw, gh, P, r, p.off, p.gap, p.join, p.shape, p.tol, ALPHA_MIN].join();
+    const memo = f.file && GEO.get(f.file), hit = memo && memo.get(key);
+    const bmp = hit ? null : (async () => createImageBitmap(await sourceOf(f), { resizeWidth: bw, resizeHeight: bh, resizeQuality: 'high' }))();
+    if (bmp) bmp.catch(() => { }); // lỗi được báo khi chờ bên dưới
+    return { f, gwc, ghc, gw, gh, bw, bh, key, hit, bmp };
+  });
   let i = 0;
-  for (const f of S.files) {
+  for (const { f, gwc, ghc, gw, gh, bw, bh, key: gkey, hit, bmp: bmpP } of jobs) {
     progress(i++ / S.files.length * 0.9, 'Tính đường cắt ' + f.name);
     await sleep();
-    // mỗi file có ô riêng theo đúng kích thước của nó
-    const gwc = Math.ceil((f.w + 2 * P) / pres), ghc = Math.ceil((f.h + 2 * P) / pres), gw = gwc * fk, gh = ghc * fk;
     Object.assign(f, { gwc, ghc, BW: gw * r, BH: gh * r });
+    if (hit) { Object.assign(f, hit); continue; }
     const cv = new OffscreenCanvas(gw, gh), cx = cv.getContext('2d', { willReadFrequently: true });
-    const bw = Math.max(1, Math.round(f.w / r)), bh = Math.max(1, Math.round(f.h / r));
-    const bmp = await createImageBitmap(await sourceOf(f), { resizeWidth: bw, resizeHeight: bh, resizeQuality: 'high' });
+    const bmp = await bmpP;
     f.thumb = bmp;
     cx.clearRect(0, 0, gw, gh); cx.drawImage(bmp, P / r, P / r, f.w / r, f.h / r);
     const px = cx.getImageData(0, 0, gw, gh).data, N = gw * gh, m = new Uint8Array(N);
     for (let k = 0; k < N; k++) m[k] = px[k * 4 + 3] >= ALPHA_MIN ? 1 : 0;
     const key = fnv(m) + ':' + bw + 'x' + bh;
-    if (cache.has(key)) { Object.assign(f, cache.get(key)); continue; }
+    if (cache.has(key)) { Object.assign(f, cache.get(key)); remember(f, gkey, cache.get(key)); continue; }
     // lấp lỗ bên trong: chỉ nền nối ra mép mới là ngoài
     const out = new Uint8Array(N), st = [];
     for (let x = 0; x < gw; x++) { st.push(x, (gh - 1) * gw + x); }
@@ -683,7 +699,7 @@ async function buildGeometry(p) {
       for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) if (dC[y * gw + x] <= lim || sdf[y * gw + x] <= occLim) o[((y / fk) | 0) * gwc + ((x / fk) | 0)] = 1;
     }
     const g = { loops, occ: o };
-    cache.set(key, g); Object.assign(f, g);
+    cache.set(key, g); Object.assign(f, g); remember(f, gkey, g);
   }
   const f0 = S.files[0], same = S.files.every(f => f.gwc === f0.gwc && f.ghc === f0.ghc);
   let occ = null;
@@ -823,8 +839,14 @@ async function greedyCore(units, Hc, Wc, fill, ms, onTick) {
   };
   const U = units.length, ids = units.map((_, i) => i), none = ids.map(() => -1), canRot = units.some(u => u.prof.length > 1);
   const keys = [u => u.w * u.h, u => u.h, u => u.w, u => Math.max(u.w, u.h), u => u.w + u.h];
-  let best = null;
-  const tryIt = (order, rot, rule) => { const r = pack(order, rot, rule); if (!best || r.score < best.score) best = { ...r, order, rot, rule }; };
+  let best = null, dup = 0;
+  const seen = new Set(); // cách đã thử thì bỏ qua: ít hình / ít hướng xoay thì số cách khác nhau có hạn
+  const tryIt = (order, rot, rule) => {
+    const key = order.join() + '|' + rot.join() + '|' + rule;
+    if (seen.has(key)) { dup++; return; }
+    seen.add(key); dup = 0;
+    const r = pack(order, rot, rule); if (!best || r.score < best.score) best = { ...r, order, rot, rule };
+  };
   for (const kf of keys) for (const rule of [0, 1]) tryIt(ids.slice().sort((a, b) => kf(units[b]) - kf(units[a])), none, rule);
   if (canRot) for (const r of [4, 5]) for (const rule of [0, 1]) tryIt(best.order.slice(), ids.map(() => r), rule);
   // cùng dữ liệu phải ra cùng kết quả: số ngẫu nhiên có hạt cố định, số lần thử tính theo khối lượng việc chứ không theo đồng hồ
@@ -833,7 +855,7 @@ async function greedyCore(units, Hc, Wc, fill, ms, onTick) {
   const load = units.reduce((t, u) => t + (u.qty || 1) * u.w, 0) || 1, iters = Math.ceil(ms * 3000 / load);
   const t0 = performance.now();
   let tick = t0, n = 0;
-  while (n < iters && performance.now() - t0 < ms * 4 && (U > 1 || canRot)) {
+  while (n < iters && dup < 300 && performance.now() - t0 < ms * 4 && (U > 1 || canRot)) {
     const order = best.order.slice(), rot = best.rot.slice(); let rule = best.rule;
     const m = rnd();
     if (m < 0.45 && U > 1) { const i = rnd() * U | 0, j = rnd() * U | 0; [order[i], order[j]] = [order[j], order[i]]; }
@@ -863,39 +885,51 @@ async function planGroups(G, p, Hc, Wc) {
   const budget = Math.max(0, p.optSec) * 1000;
   // 1) một lượt: thử vài chiều cao khung, giữ cách có diện tích khối nhỏ nhất
   const area = base.reduce((t, u) => t + u.w * u.h * u.qty, 0), maxH = Math.max(...base.map(u => Math.min(...u.prof.map(P => P.h))));
-  const tries = [...new Set([0.6, 0.8, 1, 1.25, 1.6, 2.2].map(f => Math.min(Hc, Math.max(maxH, Math.round(Math.sqrt(area) * f)))).concat([Hc]))];
-  let one = null;
+  const split = [1, 2, 3, 4, 5, 6, 8, 10].map(n => Math.floor(Hc / n)).filter(h => h >= maxH); // cụm chồng vừa khít khổ dọc
+  const tries = [...new Set([0.6, 0.8, 1, 1.25, 1.6, 2.2].map(f => Math.min(Hc, Math.max(maxH, Math.round(Math.sqrt(area) * f)))).concat(split))];
+  const ones = [];
   for (const h of tries) {
     progress(0.3, 'Đang xếp gọn 1 lượt…'); await sleep();
-    const r = await greedyCore(base, h, Wc, false, budget * 0.4 / tries.length);
+    const r = await greedyCore(base, h, Wc, false, budget * 0.3 / tries.length);
     if (r.sheets.length > 1) continue;
-    const sh = r.sheets[0], a = sh.wid * sh.hgt;
-    if (!one || a < one.a) one = { a, sh };
+    const sh = r.sheets[0];
+    if (sh.wid > Wc) continue;
+    // ước lượng khi chồng các cụm thẳng hàng: số cụm mỗi cột theo khổ dọc → chiều dài tờ (hoặc số hình nếu lấp đầy)
+    const per = Math.floor(Hc / sh.hgt), est = p.fill ? -per * Math.floor(Wc / sh.wid) : Math.ceil((sets || 1) / per) * sh.wid;
+    if (per && !ones.some(o => o.sh.wid === sh.wid && o.sh.hgt === sh.hgt)) ones.push({ est, a: sh.wid * sh.hgt, sh });
   }
-  if (!one) return null;
+  if (!ones.length) return null;
+  ones.sort((x, y) => x.est - y.est || x.a - y.a);
+  const pick = ones.slice(0, 2), small = ones.reduce((m, o) => o.a < m.a ? o : m);
+  if (!pick.includes(small)) pick.push(small);
+  const cands = [];
+  for (const one of pick) cands.push(...await groupPlans(G, p, Hc, Wc, one.sh, sets, budget * 0.7 / pick.length));
+  cands.sort(planOrder(p));
+  return cands[0];
+}
+async function groupPlans(G, p, Hc, Wc, one, sets, budget) {
   // 2) khối ghép: hợp các ảnh bit chiếm chỗ của từng hình trong lượt
-  const CW = one.sh.wid, CH = one.sh.hgt, bits = new Uint8Array(CW * CH);
-  for (const it of one.sh.items) {
+  const CW = one.wid, CH = one.hgt, bits = new Uint8Array(CW * CH);
+  for (const it of one.items) {
     const P = rotBits(S.files[it.u].occ, S.files[it.u].gwc, S.files[it.u].ghc, it.k);
     for (let y = 0; y < P.h; y++) for (let x = 0; x < P.w; x++) if (P.b[y * P.w + x] && it.x + x < CW && it.y + y < CH) bits[(it.y + y) * CW + it.x + x] = 1;
   }
   const blk = { prof: (p.rot ? [0, 1, 2, 3] : [0]).map(k => profBits(bits, CW, CH, k)).filter(P => P.w <= Wc && P.h <= Hc), qty: sets || 1, w: CW, h: CH };
   if (!blk.prof.length) return null;
   // 3) đặt các khối lên tờ
-  const r = await greedyCore([blk], Hc, Wc, p.fill, budget * 0.6, (v, n) => progress(v, 'Đang xếp các lượt… đã thử ' + n + ' cách'));
+  const r = await greedyCore([blk], Hc, Wc, p.fill, budget, (v, n) => progress(v, 'Đang xếp các lượt… đã thử ' + n + ' cách'));
   // 4) tách khối thành từng hình: xoay ô của từng hình theo hướng khối (cùng quy ước với rotBits)
-  const expand = s => s.flatMap((bk, grp) => one.sh.items.map(it => {
+  const expand = s => s.flatMap((bk, grp) => one.items.map(it => {
     const f = S.files[it.u], cw = it.k % 2 ? f.ghc : f.gwc, ch = it.k % 2 ? f.gwc : f.ghc, K = bk.k;
     const [x, y] = K === 0 ? [it.x, it.y] : K === 1 ? [CH - (it.y + ch), it.x] : K === 2 ? [CW - (it.x + cw), CH - (it.y + ch)] : [it.y, CW - (it.x + cw)];
     return { fi: it.u, k: (it.k + K) % 4, bx: (bk.x + x) * G.pres, by: (bk.y + y) * G.pres, grp };
   }));
-  const mk = list => ({ sheets: list.map(s => fin(G, p, expand(s))), cap: list[0].length * one.sh.items.length, grouped: true });
+  const mk = list => ({ sheets: list.map(s => fin(G, p, expand(s))), cap: list[0].length * one.items.length, grouped: true });
   const cands = [mk(r.sheets.map(s => s.items))];
   // 5) phân tích thêm mọi kiểu lưới của khối
   const L = await latticeSearch(bits, CW, CH, p.rot ? [0, 1, 2, 3] : [0], sets, p.fill, Hc, Wc);
   if (L) cands.push(mk(L.sheets));
-  cands.sort(planOrder(p));
-  return cands[0];
+  return cands;
 }
 // so 2 cách xếp: nhiều hình nhất (chế độ lấp đầy) → ít tờ nhất → tờ ngắn nhất theo chiều cấp liệu → diện tích nhỏ nhất
 const planOrder = p => (a, b) => {
@@ -910,12 +944,15 @@ function nfp(A, B) {
   const x0 = -(B.w - 1), n = A.w + B.w - 1, F = new Array(n), H = A.h + B.h + 2, off = B.h, d = new Int32Array(H);
   for (let i = 0; i < n; i++) {
     const dx = x0 + i, m = [];
-    d.fill(0);
+    let lo = H, hi = -1; // chỉ quét đoạn có dữ liệu, mảng d luôn được trả về 0 sau mỗi cột
     for (let cb = Math.max(0, -dx); cb < B.w && cb + dx < A.w; cb++) {
       const Ra = A.runs[cb + dx], Rb = B.runs[cb];
-      for (let j = 0; j < Ra.length; j += 2) for (let k = 0; k < Rb.length; k += 2) { d[Ra[j] - Rb[k + 1] + off]++; d[Ra[j + 1] - Rb[k] + off + 1]--; }
+      for (let j = 0; j < Ra.length; j += 2) for (let k = 0; k < Rb.length; k += 2) {
+        const a = Ra[j] - Rb[k + 1] + off, b = Ra[j + 1] - Rb[k] + off + 1;
+        d[a]++; d[b]--; if (a < lo) lo = a; if (b > hi) hi = b;
+      }
     }
-    for (let y = 0, c = 0, s = 0; y < H; y++) { const was = c; c += d[y]; if (!was && c) s = y; else if (was && !c) m.push(s - off, y - 1 - off); }
+    for (let y = lo, c = 0, s = 0; y <= hi; y++) { const was = c; c += d[y]; d[y] = 0; if (!was && c) s = y; else if (was && !c) m.push(s - off, y - 1 - off); }
     F[i] = m;
   }
   return { x0, F };
@@ -975,7 +1012,7 @@ function gapFill(pl, profs, Hc, Wc, limit) {
 }
 // N = 0: lấp đầy 1 tờ. Trả về { sheets: [[{ k, x, y }]], cases } (ô lưới)
 async function latticeSearch(bits, w0, h0, ks, N, fill, Hc, Wc) {
-  const MAXC = 360, big = Math.max(w0, h0);
+  const MAXC = 240, big = Math.max(w0, h0);
   if (big > MAXC) { // đơn vị rất lớn: phân tích trên lưới thô (phủ kín, không thể chồng), rồi đổi về ô lưới thật
     const ds = Math.ceil(big / MAXC), W = Math.ceil(w0 / ds), H = Math.ceil(h0 / ds), b = new Uint8Array(W * H);
     for (let y = 0; y < h0; y++) for (let x = 0; x < w0; x++) if (bits[y * w0 + x]) b[((y / ds) | 0) * W + ((x / ds) | 0)] = 1;
@@ -999,7 +1036,7 @@ async function latticeSearch(bits, w0, h0, ks, N, fill, Hc, Wc) {
   // cặp 2 hình: mọi cặp hướng xoay, giữ các vị trí khớp gọn nhất
   for (let i = 0; i < profs.length; i++) for (let j = i; j < profs.length; j++) {
     const A = profs[i], B = profs[j], T = touchVecs(nfp(A, B), 60);
-    const seen = T.map(([dx, dy]) => { const x0 = Math.min(0, dx), y0 = Math.min(0, dy); return { dx, dy, a: (Math.max(A.w, dx + B.w) - x0) * (Math.max(A.h, dy + B.h) - y0) }; }).sort((p, q) => p.a - q.a || p.dx - q.dx || p.dy - q.dy).slice(0, 8);
+    const seen = T.map(([dx, dy]) => { const x0 = Math.min(0, dx), y0 = Math.min(0, dy); return { dx, dy, a: (Math.max(A.w, dx + B.w) - x0) * (Math.max(A.h, dy + B.h) - y0) }; }).sort((p, q) => p.a - q.a || p.dx - q.dx || p.dy - q.dy).slice(0, 4);
     for (const s of seen) { const x0 = Math.min(0, s.dx), y0 = Math.min(0, s.dy); units.push(unitOf([{ k: A.k, x: -x0, y: -y0 }, { k: B.k, x: s.dx - x0, y: s.dy - y0 }])); }
   }
   const tops = []; let cases = 0, done = 0, tick = performance.now();
@@ -1815,6 +1852,17 @@ if (canPick) {
   };
   $('btnPltClear').onclick = async () => { S.pltDir = null; try { await idb('readwrite', s => s.delete('pltDir')); } catch (_) { } showPltDir(); };
 }
+// tên file bế ngắn: 2 chữ cái đầu tên thư mục (bỏ dấu, viết hoa) + số, không trùng file đã có trong thư mục lưu
+const cutPrefix = () => ((S.folder || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[đĐ]/g, 'D').replace(/[^A-Za-z]/g, '').slice(0, 2).toUpperCase() || 'XB').padEnd(2, 'X');
+async function cutNames(n, ext) {
+  const pre = cutPrefix(), taken = new Set();
+  for (const d of [S.dir, S.pltDir]) if (d) try { for await (const name of d.keys()) taken.add(name.toLowerCase()); } catch (_) { }
+  let c = 0; try { c = +localStorage.getItem('cutNo_' + pre) || 0; } catch (_) { } // số đã dùng trên máy này, để thư mục khác cùng 2 chữ đầu không bị trùng
+  const out = [];
+  for (let i = 0; i < n; i++) { do c++; while (taken.has((pre + c + '.' + ext).toLowerCase())); out.push(pre + c); }
+  try { localStorage.setItem('cutNo_' + pre, c); } catch (_) { }
+  return out;
+}
 async function saveAll(outs) {
   let extra = '';
   if (S.pltDir) {
@@ -1850,12 +1898,12 @@ $('btnExport').onclick = async () => {
       if (d && (await d.queryPermission({ mode: 'readwrite' })) !== 'granted' && (await d.requestPermission({ mode: 'readwrite' })) !== 'granted')
         throw new Error('chưa cấp quyền ghi vào thư mục "' + d.name + '"');
     const p = params(), outs = [], n = S.plan.sheets.length, enc = new TextEncoder();
+    const hbc = p.machine === 'hbc' && p.mark, cuts = await cutNames(n, hbc ? 'plt' : 'dxf');
     for (let i = 0; i < n; i++) {
       const sh = S.plan.sheets[i], base = S.folder + (n > 1 ? '_' + (i + 1) : '');
       const t = await buildTIF(sh, p, v => progress((i + v) / n, 'Đang tạo ' + base + '.tif… ' + Math.round(v * 100) + '%'));
       // file cắt: máy HBC = PLT đúng định dạng plugin (cần dấu định vị chuẩn plugin trên TIF); máy Tranh = DXF theo gốc chấm định vị
-      const hbc = p.machine === 'hbc' && p.mark;
-      outs.push({ name: base + '.tif', parts: t.parts }, hbc ? { name: base + '.plt', parts: [enc.encode(buildHBC(sh, p).text)] } : { name: base + '.dxf', parts: [enc.encode(buildDXF(sh, p, p.machine === 'hbc').text)] });
+      outs.push({ name: base + '.tif', parts: t.parts }, hbc ? { name: cuts[i] + '.plt', parts: [enc.encode(buildHBC(sh, p).text)] } : { name: cuts[i] + '.dxf', parts: [enc.encode(buildDXF(sh, p, p.machine === 'hbc').text)] });
     }
     progress(1, 'Đang lưu…'); await sleep();
     progress(0, await saveAll(outs), 'ok');
