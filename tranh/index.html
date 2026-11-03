@@ -65,6 +65,9 @@ th,td{padding:7px 9px;border-bottom:1px solid var(--line);vertical-align:top}
 tr:last-child td{border-bottom:0}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 td select{max-width:320px;padding:3px 5px}
+tr.late>td{background:var(--err-bg)}
+tr.late>td:first-child{box-shadow:inset 4px 0 0 var(--err)}
+.lateTag{color:var(--err);font-weight:700;font-size:12px;margin-top:4px}
 .tag{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;font-weight:600;white-space:nowrap;border:0}
 .tag.ok{color:var(--ok);background:var(--ok-bg)}.tag.warn{color:var(--warn);background:var(--warn-bg)}.tag.err{color:var(--err);background:var(--err-bg)}.tag.mut{color:var(--muted);background:var(--mut-bg)}
 #pwDlg{border:0;padding:0;background:transparent}
@@ -142,6 +145,10 @@ td select{max-width:320px;padding:3px 5px}
       Kéo file Excel đơn hàng Shopee vào đây, hoặc
       <label class="btn"><input id="xlsx" type="file" accept=".xlsx,.xls,.csv" hidden>chọn file</label>
     </div>
+    <div class="row" style="margin-top:8px">
+      <label class="btn"><input id="labelBulk" type="file" accept="application/pdf,image/png,image/jpeg" multiple hidden>Tải loạt phiếu gửi hàng</label>
+      <span class="note grow" id="labelInfo">Chọn nhiều file PDF một lần, tên file là mã vận đơn (ví dụ SPXVN012345678.pdf), app tự gắn vào đúng đơn.</span>
+    </div>
     <div class="note" id="xlsxInfo" style="margin-top:6px"></div>
     <div class="row end" style="margin-top:12px">
       <label class="f">Mã tranh<input id="mCode" placeholder="NN268-1" size="12"></label>
@@ -163,6 +170,7 @@ td select{max-width:320px;padding:3px 5px}
       <button id="rescan" class="noprint">Quét lại kho</button>
       <button id="run" class="main noprint" disabled>Lấy file</button>
     </div>
+    <div id="ordWarn" class="noprint"></div>
     <div class="cards" id="cards"></div>
     <div id="prog" class="noprint" hidden>
       <div id="progTxt" class="note"></div>
@@ -570,7 +578,7 @@ const Core = (() => {
     const head = rows[hIdx].map(c => String(c ?? '').trim().toLowerCase());
     const col = n => head.indexOf(n);
     const c = { id: col('mã đơn hàng'), date: col('ngày đặt hàng'), st: col('trạng thái đơn hàng'), prod: col('tên sản phẩm'),
-      var: col('tên phân loại hàng'), skuV: col('sku phân loại hàng'), skuP: col('sku sản phẩm'), qty: col('số lượng') };
+      var: col('tên phân loại hàng'), skuV: col('sku phân loại hàng'), skuP: col('sku sản phẩm'), qty: col('số lượng'), track: col('mã vận đơn') };
     if (c.var < 0 || c.qty < 0) throw new Error('Thiếu cột “Tên phân loại hàng” hoặc “Số lượng”');
     const out = [], skipped = {};
     const norm = s => String(s ?? '').normalize('NFC').trim().toLowerCase();
@@ -579,7 +587,9 @@ const Core = (() => {
       /* chỉ lấy đơn “Chờ giao hàng”, các trạng thái khác đếm để báo lại */
       if (c.st >= 0 && norm(r[c.st]) !== 'chờ giao hàng') { const s = String(r[c.st] ?? '').trim() || '(trống)'; skipped[s] = (skipped[s] || 0) + 1; continue; }
       const p = parseVariation({ variation: r[c.var], skuVar: r[c.skuV], skuProd: r[c.skuP], product: r[c.prod] });
-      out.push({ orderId: String(r[c.id]), orderDate: String(r[c.date] ?? '').slice(0, 10), variation: String(r[c.var] ?? ''),
+      /* mã đơn dùng trong app = Mã vận đơn; đơn chưa có mã vận đơn thì tạm dùng Mã đơn hàng */
+      const track = c.track >= 0 ? String(r[c.track] ?? '').trim() : '';
+      out.push({ orderId: track || String(r[c.id]), shopeeId: String(r[c.id]), noTrack: !track, orderDate: String(r[c.date] ?? '').slice(0, 10), variation: String(r[c.var] ?? ''),
         product: String(r[c.prod] ?? ''), skuProd: String(r[c.skuP] ?? '').trim(), qty: Math.max(1, parseInt(r[c.qty], 10) || 1), ...p });
     }
     return { orders: out, skipped };
@@ -1061,13 +1071,19 @@ function addOrders(list) {
     if (old) { if ('retake' in o) { old.retake = o.retake; added.push(old); } continue; }
     have.set(o.key, o);
     o.id = crypto.randomUUID ? crypto.randomUUID() : String(Math.random());
+    o.addedT = Date.now();
     S.orders.push(o); added.push(o);
   }
   analyze();
   return added;
 }
-/* mã đơn = 5 ký tự cuối của Mã đơn hàng trong file Excel */
-const shortId = id => String(id || '').replace(/\s+/g, '').slice(-5);
+/* mã đơn = Mã vận đơn trong file Excel (đơn lẻ: mã tự tạo) */
+const shortId = id => String(id || '').replace(/\s+/g, '');
+/* đơn tải lên quá 36 giờ mà chưa “Đã xong” */
+const LATE_MS = 36 * 3600 * 1000;
+const isLate = o => !!o.addedT && !['finished', 'taken'].includes(o.status) && Date.now() - o.addedT > LATE_MS;
+const isLateRec = r => !r.prod && !!r.loadT && Date.now() - r.loadT > LATE_MS;
+const ageText = t => { const h = Math.floor((Date.now() - t) / 3600000); return h >= 48 ? `${Math.floor(h / 24)} ngày ${h % 24} giờ` : `${h} giờ`; };
 const isAuto = o => /^Nhập tay/.test(o.orderId || '');
 async function loadExcel(file) {
   try {
@@ -1130,6 +1146,7 @@ function analyze() {
   const ready = Object.keys(S.index).length > 0;
   const recs = latestRecs();
   for (const o of S.orders) {
+    if (!o.addedT) o.addedT = o.le ? ((leOf(o) || {}).t || Date.now()) : Date.now();
     const r = recs.get(o.key);
     /* đã chỉnh trạng thái sản xuất (xong, xong mà hủy, hủy đơn, lấy tồn kho): rời Phân tích đơn */
     if (r && r.prod && !o.retake) { o.status = 'finished'; continue; }
@@ -1214,7 +1231,7 @@ const whoDid = id => (S.shared.names[id] && S.shared.names[id].name) || (S.share
 function renderProd() {
   const live = S.records.filter(r => !r.del);
   const doing = live.filter(r => !r.prod).sort((a, b) => b.t - a.t);
-  $('sxRows').innerHTML = doing.map(r => `<tr><td>${recThumb(r)}</td><td>${esc(r.date.split('-').reverse().join('/'))}</td><td>${recId(r)}</td><td><b>${esc(r.code)}</b></td><td>${r.w}x${r.h}</td><td class="num">${r.count}</td><td class="path">${esc(r.file)}${r.orderId && hasLabel(r.orderId) ? ' <span class="tag ok">Có phiếu gửi</span>' : ''}</td>
+  $('sxRows').innerHTML = doing.map(r => `<tr class="${isLateRec(r) ? 'late' : ''}"><td>${recThumb(r)}</td><td>${esc(r.date.split('-').reverse().join('/'))}${isLateRec(r) ? `<div class="lateTag">Quá ${ageText(r.loadT)} chưa xong</div>` : ''}</td><td>${recId(r)}</td><td><b>${esc(r.code)}</b></td><td>${r.w}x${r.h}</td><td class="num">${r.count}</td><td class="path">${esc(r.file)}${r.orderId && hasLabel(r.orderId) ? ' <span class="tag ok">Có phiếu gửi</span>' : ''}</td>
     <td class="noprint" style="white-space:nowrap"><button class="link" data-pr="${r.id}" data-v="xong">Đã xong</button><br><button class="link" data-pr="${r.id}" data-v="huy">Xong mà hủy</button><br><button class="link" data-pr="${r.id}" data-v="huydon">Hủy đơn</button></td></tr>`).join('')
     || '<tr><td colspan="8" class="note">Không có đơn nào đang làm.</td></tr>';
   renderLe();
@@ -1455,6 +1472,22 @@ document.addEventListener('change', async e => {
   i.value = ''; renderOrders(); renderProd();
 });
 document.addEventListener('click', e => { const b = e.target.closest && e.target.closest('[data-plp]'); if (b) printLabel(b.dataset.plp); });
+/* tải loạt phiếu: tên file là mã vận đơn; tên có thêm chữ thì tìm mã đơn nằm trong tên */
+$('labelBulk').addEventListener('change', async e => {
+  const files = [...e.target.files]; e.target.value = '';
+  if (!files.length) return;
+  const ids = [...new Set([...S.orders.map(o => o.orderId), ...S.records.map(r => r.orderId), ...S.le.map(L => L.code)].filter(Boolean))];
+  const ok = [], loose = [], fail = [];
+  for (const f of files) {
+    const stem = f.name.replace(/\.[^.]+$/, '').trim(), up = stem.toUpperCase();
+    const id = ids.find(x => x.toUpperCase() === up) || ids.filter(x => x.length >= 6 && up.includes(x.toUpperCase())).sort((a, b) => b.length - a.length)[0];
+    $('labelInfo').textContent = `Đang lưu ${ok.length + loose.length + fail.length + 1}/${files.length}: ${f.name}`;
+    try { await saveLabel(id || stem, f); (id ? ok : loose).push(id || stem); } catch (err) { fail.push(`${f.name} (${err.message})`); }
+  }
+  $('labelInfo').textContent = `Đã gắn ${ok.length} phiếu vào đơn` + (loose.length ? `; ${loose.length} phiếu chưa thấy đơn tương ứng, đã lưu sẵn và sẽ tự gắn khi đơn được nạp: ${loose.slice(0, 6).join(', ')}${loose.length > 6 ? '…' : ''}` : '')
+    + (fail.length ? `; lỗi ${fail.length}: ${fail.slice(0, 3).join(', ')}` : '') + '.';
+  renderOrders(); renderProd();
+});
 
 function renderLe() {
   const les = S.le.filter(L => !L.del);
@@ -1930,11 +1963,24 @@ function renderDesign() {
   document.querySelectorAll('[data-nm]').forEach(i => i.onchange = () => { S.mine.names[i.dataset.nm] = { name: i.value.trim(), t: Date.now() }; i.blur(); syncShared(); });
 }
 const TAGS = { design: ['warn', 'Chờ thiết kế'], taken: ['mut', 'Đã lấy lần trước, bỏ qua'], done: ['ok', 'Đã lấy file'], ok: ['ok', 'Có sẵn đúng cỡ'], resize: ['warn', 'Sẽ chỉnh kích thước'], review: ['warn', 'Cần xem lại'], missing: ['err', 'Không tìm thấy file'], wait: ['mut', 'Chờ chọn thư mục'], fail: ['err', 'Lỗi khi lấy file'] };
-const FILTERS = [['all', 'Tất cả', ''], ['done', 'Đã lấy file', 'ok'], ['ready', 'Sẵn sàng lấy', 'ok'], ['review', 'Cần xem lại', 'warn'], ['design', 'Chờ thiết kế', 'warn'], ['missing', 'Không tìm thấy', 'err']];
+const FILTERS = [['all', 'Tất cả', ''], ['late', 'Quá 36 giờ chưa xong', 'err'], ['nolabel', 'Chưa có phiếu gửi', 'warn'], ['done', 'Đã lấy file', 'ok'], ['ready', 'Sẵn sàng lấy', 'ok'],
+  ['review', 'Cần xem lại', 'warn'], ['design', 'Chờ thiết kế', 'warn'], ['missing', 'Không tìm thấy', 'err']];
 const FILTER_ST = { ready: ['ok', 'resize'], missing: ['missing', 'fail'], done: ['done', 'taken'] };
+const needsLabel = o => !isAuto(o) && o.status !== 'taken' && !hasLabel(o.orderId);
+const FILTER_FN = { late: isLate, nolabel: needsLabel };
 /* đơn đã chỉnh trạng thái sản xuất (finished) không hiện ở Phân tích đơn nữa */
-const inFilter = (o, f) => o.status !== 'finished' && (f === 'all' || (FILTER_ST[f] || [f]).includes(o.status));
+const inFilter = (o, f) => o.status !== 'finished' && (f === 'all' || (FILTER_FN[f] ? FILTER_FN[f](o) : (FILTER_ST[f] || [f]).includes(o.status)));
+/* cảnh báo ở đầu Phân tích đơn: đơn quá hạn, đơn chưa có phiếu gửi (đếm theo mã đơn) */
+function renderOrdWarn() {
+  const vis = S.orders.filter(o => o.status !== 'finished');
+  const late = new Set(vis.filter(isLate).map(o => o.orderId)), noLabel = [...new Set(vis.filter(needsLabel).map(o => o.orderId))];
+  const box = (cls, txt, f) => `<div class="panel" style="margin:10px 0 0;padding:10px 12px;background:var(--${cls}-bg)"><div class="row"><span class="grow" style="color:var(--${cls});font-weight:600">${txt}</span><button class="link" data-wf="${f}">Xem các đơn này</button></div></div>`;
+  $('ordWarn').innerHTML = (late.size ? box('err', `${late.size} đơn đã tải lên quá 36 giờ mà chưa “Đã xong”.`, 'late') : '')
+    + (noLabel.length ? box('warn', `${noLabel.length} đơn chưa có phiếu gửi hàng: ${noLabel.slice(0, 8).map(esc).join(', ')}${noLabel.length > 8 ? '…' : ''}. Sale hãy tải phiếu lên.`, 'nolabel') : '');
+  document.querySelectorAll('[data-wf]').forEach(b => b.onclick = () => { S.filter = b.dataset.wf; renderOrders(); });
+}
 function renderOrders() {
+  renderOrdWarn();
   $('cards').innerHTML = FILTERS.map(([k, label, cls]) =>
     `<button class="card ${cls}" data-f="${k}" aria-pressed="${S.filter === k}"><b>${S.orders.filter(o => inFilter(o, k)).length}</b><small>${label}</small></button>`).join('');
   document.querySelectorAll('#cards .card').forEach(c => c.onclick = () => { S.filter = c.dataset.f; renderOrders(); });
@@ -1948,8 +1994,9 @@ function renderOrders() {
       : o.status === 'done' ? esc(o.outName || '') : m && m.files.length ? m.files.map(f => esc(f.rel)).join('<br>') : '';
     const cat = catOf(o), lo = cat && cat.linkOnly;
     const [cls, label] = lo && ['ok', 'resize'].includes(o.status) ? ['ok', 'Sẵn sàng, chỉ ghi đường dẫn'] : TAGS[o.status] || TAGS.wait;
-    return `<tr>
-      <td>${esc(o.orderDate)}</td><td>${o.le ? leCell(o) : isAuto(o) ? 'Nhập tay' : `<b title="${esc(o.orderId)}">${esc(shortId(o.orderId))}</b>`}${isAuto(o) ? '' : labelCell(o.orderId)}</td>
+    const late = isLate(o);
+    return `<tr class="${late ? 'late' : ''}">
+      <td>${esc(o.orderDate)}${late ? `<div class="lateTag">Quá ${ageText(o.addedT)} chưa xong</div>` : ''}</td><td>${o.le ? leCell(o) : isAuto(o) ? 'Nhập tay' : `<b title="${esc(o.shopeeId ? 'Mã đơn hàng ' + o.shopeeId : o.orderId)}">${esc(shortId(o.orderId))}</b>${o.noTrack ? '<div class="warnline">Chưa có mã vận đơn</div>' : ''}`}${isAuto(o) ? '' : labelCell(o.orderId)}</td>
       <td>${o.code ? `<b>${esc(codeLabel(o))}</b>` : `<input data-code="${o.id}" placeholder="Nhập mã" size="9" style="padding:2px 4px">`}${o.gift ? ' <span class="tag mut">tặng</span>' : ''}<div class="note">${esc(o.variation)}</div><div class="note">${esc(cat ? cat.name : S.cat.common)} → ${lo ? 'chỉ ghi đường dẫn' : esc(dirLabel(cat))}</div></td>
       <td>${o.size ? Core.sizeKey(o.size.w, o.size.h) : `<input data-size="${o.id}" placeholder="40x60" size="6" style="padding:2px 4px">`}</td>
       <td class="num">${o.qty}</td>
@@ -2068,7 +2115,7 @@ async function produce(file, rel, o, dir, baseName) {
 }
 async function record(o, source, file, extra = {}) {
   S.records.push({ id: crypto.randomUUID ? crypto.randomUUID() : String(Math.random()), t: Date.now(), date: today(), orderKey: o.key || '', orderId: isAuto(o) ? '' : o.orderId,
-    code: codeLabel(o), variation: o.variation || '', w: o.size ? o.size.w : 0, h: o.size ? o.size.h : 0, count: Math.round(o.qty * o.pieces), source, file: file || '', ...extra });
+    code: codeLabel(o), variation: o.variation || '', w: o.size ? o.size.w : 0, h: o.size ? o.size.h : 0, count: Math.round(o.qty * o.pieces), source, file: file || '', loadT: o.addedT || Date.now(), ...extra });
   await saveStats();
 }
 async function saveStats() { await kvSet('records', S.records); await syncStats(); }
