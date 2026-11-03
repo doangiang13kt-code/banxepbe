@@ -243,10 +243,17 @@ td select{max-width:320px;padding:3px 5px}
       <tbody id="catRows"></tbody>
     </table></div>
     <div class="row" style="margin-top:8px"><button id="catAdd">Thêm phân loại</button></div>
-    <h2 style="margin-top:18px">Sản phẩm trong đơn</h2>
-    <p class="note">Chọn phân loại cho từng sản phẩm. Để “Theo từ khóa” thì app tự nhận theo từ khóa ở bảng trên, tìm trong tên sản phẩm, tên phân loại hàng và SKU.</p>
-    <div class="tbl" style="max-height:420px;overflow:auto"><table>
-      <thead><tr><th>Sản phẩm</th><th class="num">Số dòng</th><th>Phân loại</th></tr></thead>
+    <h2 style="margin-top:18px">Sản phẩm</h2>
+    <p class="note">Sản phẩm lấy theo cột Tên phân loại hàng, bỏ phần cỡ sau dấu phẩy. Để “Theo từ khóa” thì app tự nhận theo từ khóa ở bảng trên.
+      Thư mục lấy file để trống thì app tự tìm trong cả kho; có điền thì chỉ tìm trong thư mục đó (phải nằm trong thư mục lấy file chung).</p>
+    <div class="row" style="margin-bottom:8px">
+      <label class="btn"><input id="catXlsx" type="file" accept=".xlsx,.xls,.csv" hidden>Nhập Excel phân loại</label>
+      <button id="catTpl">Tải file mẫu</button>
+      <span class="note" id="catInfo"></span>
+    </div>
+    <p class="note">File Excel cần cột <b>Tên phân loại hàng</b>, thêm cột <b>Phân loại</b> và/hoặc <b>Thư mục lấy file</b>. Phân loại chưa có sẽ được tạo mới.</p>
+    <div class="tbl" style="max-height:460px;overflow:auto"><table>
+      <thead><tr><th>Sản phẩm</th><th class="num">Dòng đơn</th><th>Phân loại</th><th>Thư mục lấy file</th></tr></thead>
       <tbody id="prodRows"></tbody>
     </table></div>
   </div>
@@ -339,11 +346,16 @@ const Core = (() => {
   }
 
   function buildIndex(paths) {
-    const idx = {}, folders = {};
+    const idx = {}, folders = {}, all = [];
     Object.defineProperty(idx, 'folders', { value: folders });
+    Object.defineProperty(idx, 'all', { value: all });
     for (const p of paths) {
-      const f = typeof p === 'string' ? parseFilePath(p) : p;
-      if (!f || f.backup) continue;
+      const rel = typeof p === 'string' ? p : p.rel;
+      const f = (typeof p === 'string' ? parseFilePath(p) : p) ||
+        { code: null, variant: null, size: parseSizeText(rel.split(/[\\/]/).pop()), rel, usable: FILE_RE.test(rel), backup: /backup_of/i.test(rel) };
+      if (f.backup) continue;
+      all.push(f);
+      if (!f.code) continue;
       (idx[f.code] = idx[f.code] || []).push(f);
       /* ghi file vào mọi thư mục cha có mã, để lấy cả thư mục cho tranh bộ */
       const parts = f.rel.split(/[\\/]/).slice(0, -1);
@@ -362,7 +374,27 @@ const Core = (() => {
   const ratio = s => Math.max(s.w, s.h) / Math.min(s.w, s.h);
 
   /* Trả về { status, files, candidates, note }; status: ok | resize | review | missing */
-  function matchOrder(o, idx) {
+  /* sản phẩm có thư mục chỉ định: chỉ tìm trong thư mục đó, tên file không cần có mã */
+  function matchInFolder(o, idx, folder) {
+    const base = folder.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '') + '/', where = `Thư mục chỉ định ${base.slice(0, -1)}`;
+    const pool = (idx.all || []).filter(f => f.usable && f.rel.replace(/\\/g, '/').startsWith(base));
+    if (!pool.length) return { status: 'missing', files: [], candidates: [], note: `${where} không có file ảnh` };
+    if (!o.size) return { status: 'review', files: [], candidates: pool, note: 'Đơn không ghi kích thước, hãy nhập cỡ' };
+    const byCode = o.code ? pool.filter(f => f.code === o.code && (!o.variant || f.variant === o.variant)) : [];
+    const use = byCode.length ? byCode : pool, exact = use.filter(f => sameSize(f.size, o.size));
+    if (o.pieces > 1) {
+      const list = exact.length ? exact : use;
+      return { status: exact.length ? 'ok' : 'resize', files: list, candidates: [], folder: base.slice(0, -1),
+        note: `${list.length === o.pieces ? '' : `Thư mục có ${list.length} file, đơn ghi ${o.pieces} tấm. `}Lấy cả ${where}` };
+    }
+    if (exact.length === 1) return { status: 'ok', files: exact, candidates: use, note: where };
+    if (exact.length > 1) return { status: 'review', files: [], candidates: exact, note: `${where} có ${exact.length} file cùng cỡ, hãy chọn file` };
+    if (use.length === 1) return { status: 'resize', files: use, candidates: use, note: `${where}, chỉnh từ ${use[0].size ? sizeKey(use[0].size.w, use[0].size.h) : 'file gốc'}` };
+    return { status: 'review', files: [], candidates: use, note: `${where} có nhiều file nhưng không có cỡ ${sizeKey(o.size.w, o.size.h)}, hãy chọn file` };
+  }
+
+  function matchOrder(o, idx, folder) {
+    if (folder) return matchInFolder(o, idx, folder);
     if (!o.code) return { status: 'review', files: [], candidates: [], note: 'Đơn không có mã tranh, hãy nhập mã' };
     if (o.pieces > 1 && idx.folders) {
       const group = idx.folders[`${o.code}|${o.variant || ''}`];
@@ -656,7 +688,8 @@ const Core = (() => {
   }
 
   /* ---- phân loại sản phẩm: chọn tay theo sản phẩm > từ khóa > thư mục chung ---- */
-  const productKey = o => String(o.skuProd || o.product || '').trim();
+  /* sản phẩm = Tên phân loại hàng, bỏ phần cỡ sau dấu phẩy: "decal - N6,60x80" → "decal - N6" */
+  const productKey = o => String(o.variation || '').split(',')[0].trim();
   function classify(o, cat) {
     const list = cat.list || [], byId = id => list.find(c => c.id === id);
     if (o.catId && byId(o.catId)) return byId(o.catId);
@@ -714,7 +747,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const S = { src: null, dst: null, index: {}, handles: new Map(), orders: [], records: [], filter: 'all', cfg: { minDpi: 100, maxCrop: 25 },
   machine: '', mine: { label: '', missing: [], confirms: [], names: {} }, shared: Core.mergeShared([]),
-  cat: { t: 0, list: [], common: 'Chưa phân loại', products: {} } };
+  cat: { t: 0, list: [], common: 'Chưa phân loại', products: {}, folders: {} } };
 const PW = { salt: 'newhouse-layfilein-v1', hash: 'b77ea80da681b3c9d1f0366943dfae579bbdb2ecc63b718b9cdb688644ded6c6' };
 const PW_TK = { salt: 'newhouse-thongke-v1', hash: '96d2155416b804c83c50f374207f3d90c4502fe7c4f193b544d76b2ef5f976ba' };
 const STATS_FILE = 'thongke-in.json';
@@ -757,6 +790,7 @@ async function enter() {
   }
   S.mine = { ...S.mine, ...(await kvGet('mine') || {}) };
   S.cat = { ...S.cat, ...(await kvGet('cat') || {}) };
+  S.cat.folders = S.cat.folders || {};
   renderCat();
   $('cfgId').value = S.machine; $('cfgLabel').value = S.mine.label;
   $('minDpi').value = S.cfg.minDpi; $('maxCrop').value = S.cfg.maxCrop;
@@ -875,7 +909,7 @@ function readManual() {
   const c = Core.parseCodeText($('mCode').value), size = Core.parseSizeText($('mSize').value);
   if (!c) { $('mErr').textContent = 'Mã tranh chưa đúng, ví dụ NN268-1.'; return null; }
   if (!size) { $('mErr').textContent = 'Kích thước chưa đúng, ví dụ 40x40.'; return null; }
-  return { orderId: $('mOrder').value.trim() || 'Nhập tay', orderDate: today(), variation: 'Nhập tay', catId: $('mCat').value, code: c.code, variant: c.variant, size,
+  return { orderId: $('mOrder').value.trim() || 'Nhập tay', orderDate: today(), variation: c.code + (c.variant ? '-' + c.variant : ''), catId: $('mCat').value, code: c.code, variant: c.variant, size,
     qty: Math.max(1, +$('mQty').value || 1), pieces: Math.max(1, +$('mPcs').value || 1), manual: true };
 }
 const clearManual = () => { $('mCode').value = $('mOrder').value = ''; $('mCode').focus(); };
@@ -890,7 +924,7 @@ $('mDirect').addEventListener('click', async () => {
   await record(o, 'Nhập tay'); clearManual(); renderStats();
   $('mErr').textContent = ''; $('xlsxInfo').textContent = `Đã ghi thống kê: ${codeLabel(o)} ${Core.sizeKey(o.size.w, o.size.h)} × ${o.qty * o.pieces}.`;
 });
-const codeLabel = o => (o.code || '?') + (o.variant ? '-' + o.variant : '');
+const codeLabel = o => o.code ? o.code + (o.variant ? '-' + o.variant : '') : (Core.productKey(o) || '?');
 
 /* ---- phân tích ---- */
 function analyze() {
@@ -900,9 +934,9 @@ function analyze() {
     if (o.retake === false) { o.status = 'taken'; continue; }
     if (done.has(o.key) && !o.retake) { o.status = 'done'; continue; }
     if (o.chosen && o.size && S.handles.has(o.chosen)) {
-      const f = Core.parseFilePath(o.chosen) || { rel: o.chosen, size: null };
+      const f = (S.index.all || []).find(x => x.rel === o.chosen) || { rel: o.chosen, size: null };
       o.match = { status: Core.sameSize(f.size, o.size) ? 'ok' : 'resize', files: [f], candidates: o.match ? o.match.candidates : [], note: 'Bạn đã chọn file' };
-    } else o.match = ready ? Core.matchOrder(o, S.index) : null;
+    } else o.match = ready ? Core.matchOrder(o, S.index, S.cat.folders[Core.productKey(o)]) : null;
     o.status = o.match ? o.match.status : 'wait';
   }
   kvSet('orders', S.orders);
@@ -931,13 +965,13 @@ function renderCat() {
     <td><button class="link" data-cx="${x.id}">Xóa</button></td></tr>`).join('') || '<tr><td colspan="3" class="note">Chưa có phân loại nào, mọi sản phẩm vào thư mục chung.</td></tr>';
   const opts = sel => `<option value="" ${!sel ? 'selected' : ''}>Theo từ khóa</option><option value="none" ${sel === 'none' ? 'selected' : ''}>Chưa phân loại (thư mục chung)</option>` +
     c.list.map(x => `<option value="${x.id}" ${sel === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
-  const prods = {};
-  for (const o of S.orders) { const k = Core.productKey(o); if (k) (prods[k] = prods[k] || { k, o, n: 0 }).n++; }
-  $('prodRows').innerHTML = Object.values(prods).map(p => {
+  $('prodRows').innerHTML = productList().map(p => {
     const now = Core.classify({ ...p.o, catId: '' }, c);
-    return `<tr><td>${esc((p.o.product || p.k).slice(0, 95))}${p.o.skuProd ? ` <span class="note">SKU ${esc(p.o.skuProd)}</span>` : ''}</td><td class="num">${p.n}</td>
-      <td><select data-pm="${esc(p.k)}" aria-label="Phân loại">${opts(c.products[p.k])}</select><div class="note">Lưu vào: ${esc(now ? now.name : c.common)}</div></td></tr>`;
-  }).join('') || '<tr><td colspan="3" class="note">Nạp file đơn để thấy danh sách sản phẩm.</td></tr>';
+    return `<tr><td><b>${esc(p.k)}</b>${p.o.product ? `<div class="note">${esc(p.o.product.slice(0, 80))}</div>` : ''}</td><td class="num">${p.n}</td>
+      <td><select data-pm="${esc(p.k)}" aria-label="Phân loại">${opts(c.products[p.k])}</select><div class="note">Lưu vào: ${esc(now ? now.name : c.common)}</div></td>
+      <td><input data-pf="${esc(p.k)}" value="${esc(c.folders[p.k] || '')}" placeholder="Tự tìm trong kho" size="24" aria-label="Thư mục lấy file">
+        <button class="link" data-pfp="${esc(p.k)}">Chọn…</button></td></tr>`;
+  }).join('') || '<tr><td colspan="4" class="note">Nạp file đơn hoặc file Excel phân loại để thấy danh sách sản phẩm.</td></tr>';
   const keep = $('mCat').value;
   $('mCat').innerHTML = '<option value="">Chưa phân loại</option>' + c.list.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('');
   $('mCat').value = c.list.some(x => x.id === keep) ? keep : '';
@@ -949,7 +983,68 @@ function renderCat() {
     c.list = c.list.filter(x => x.id !== b.dataset.cx); saveCat();
   });
   document.querySelectorAll('[data-pm]').forEach(s => s.onchange = () => { if (s.value) c.products[s.dataset.pm] = s.value; else delete c.products[s.dataset.pm]; saveCat(); });
+  document.querySelectorAll('[data-pf]').forEach(i => i.onchange = async () => { setFolder(i.dataset.pf, toRel(i.value)); await saveCat(); analyze(); });
+  document.querySelectorAll('[data-pfp]').forEach(b => b.onclick = () => pickFolder(b.dataset.pfp));
 }
+function productList() {
+  const c = S.cat, prods = {};
+  for (const o of S.orders) { const k = Core.productKey(o); if (k) (prods[k] = prods[k] || { k, o, n: 0 }).n++; }
+  for (const k of new Set([...Object.keys(c.products), ...Object.keys(c.folders)])) if (!prods[k]) prods[k] = { k, o: { variation: k }, n: 0 };
+  return Object.values(prods).sort((a, b) => b.n - a.n || a.k.localeCompare(b.k));
+}
+const setFolder = (k, v) => { if (v) S.cat.folders[k] = v; else delete S.cat.folders[k]; };
+/* đường dẫn tương đối trong kho; nhận cả đường dẫn đầy đủ nếu có chứa tên thư mục kho */
+function toRel(p) {
+  let s = String(p || '').trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  if (/^[a-z]:\//i.test(s) || s.startsWith('//')) {
+    const seg = s.split('/'), i = S.src ? seg.lastIndexOf(S.src.name) : -1;
+    s = i >= 0 ? seg.slice(i + 1).join('/') : '';
+  }
+  return s;
+}
+async function pickFolder(k) {
+  if (!S.src) { alert('Hãy chọn thư mục lấy file ở tab Đơn hàng trước.'); return; }
+  try {
+    const h = await showDirectoryPicker({ id: 'sp', startIn: S.src, mode: 'read' });
+    const parts = await S.src.resolve(h);
+    if (!parts) { alert(`Thư mục “${h.name}” không nằm trong thư mục lấy file “${S.src.name}”.`); return; }
+    if (!parts.length) { alert('Hãy chọn một thư mục con, không chọn chính thư mục lấy file.'); return; }
+    setFolder(k, parts.join('/')); await saveCat(); analyze();
+  } catch (e) { if (e.name !== 'AbortError') alert(e.message); }
+}
+$('catXlsx').addEventListener('change', async e => {
+  const file = e.target.files[0]; e.target.value = ''; if (!file) return;
+  try {
+    const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '', raw: false });
+    const norm = s => String(s ?? '').normalize('NFC').trim().toLowerCase();
+    const hi = rows.findIndex(r => r.some(x => ['tên phân loại hàng', 'sản phẩm'].includes(norm(x))));
+    if (hi < 0) throw new Error('không thấy cột “Tên phân loại hàng”');
+    const h = rows[hi].map(norm), col = names => h.findIndex(x => names.includes(x));
+    const cp = col(['tên phân loại hàng', 'sản phẩm']), cc = col(['phân loại', 'loại sản phẩm']), cf = col(['thư mục lấy file', 'thư mục']);
+    let n = 0, made = 0, bad = 0;
+    for (const r of rows.slice(hi + 1)) {
+      const k = Core.productKey({ variation: r[cp] }); if (!k) continue;
+      const cname = cc >= 0 ? String(r[cc]).trim() : '';
+      if (cname) {
+        let x = S.cat.list.find(c => norm(c.name) === norm(cname));
+        if (!x) { x = { id: 'c' + Date.now().toString(36) + made, name: cname, kw: '' }; S.cat.list.push(x); made++; }
+        S.cat.products[k] = x.id;
+      }
+      if (cf >= 0 && String(r[cf]).trim()) { const rel = toRel(r[cf]); if (rel) setFolder(k, rel); else bad++; }
+      n++;
+    }
+    await saveCat(); analyze();
+    $('catInfo').textContent = `Đã nhập ${n} sản phẩm, tạo mới ${made} phân loại` + (bad ? `; ${bad} thư mục không nằm trong thư mục lấy file nên bị bỏ qua` : '') + '.';
+  } catch (err) { $('catInfo').textContent = 'Không đọc được file: ' + err.message; }
+});
+$('catTpl').addEventListener('click', () => {
+  const rows = [['Tên phân loại hàng', 'Phân loại', 'Thư mục lấy file']];
+  for (const p of productList()) { const x = S.cat.list.find(c => c.id === S.cat.products[p.k]); rows.push([p.k, x ? x.name : '', S.cat.folders[p.k] || '']); }
+  if (rows.length === 1) rows.push(['decal - N6', 'Decal', 'Decal Noel/N6'], ['NN268-1', 'Tranh canvas', '']);
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Phan loai');
+  XLSX.writeFile(wb, 'phan-loai-san-pham.xlsx');
+});
 $('catAdd').addEventListener('click', () => { S.cat.list.push({ id: 'c' + Date.now().toString(36), name: 'Phân loại mới', kw: '' }); saveCat(); });
 $('catCommon').addEventListener('change', e => { S.cat.common = e.target.value.trim() || 'Chưa phân loại'; saveCat(); });
 
@@ -968,7 +1063,7 @@ async function syncShared() {
       try {
         const r = JSON.parse(await (await (await d.getFileHandle('phanloai.json')).getFile()).text());
         remoteT = r.t || 0;
-        if (remoteT > (S.cat.t || 0)) { S.cat = { ...S.cat, ...r }; await kvSet('cat', S.cat); renderCat(); }
+        if (remoteT > (S.cat.t || 0)) { S.cat = { ...S.cat, folders: {}, ...r }; await kvSet('cat', S.cat); analyze(); }
       } catch (_) { }
       if (S.cat.t && S.cat.t > remoteT) await writeParts(d, 'phanloai.json', [JSON.stringify(S.cat)]);
       for await (const [name, h] of d.entries()) {
