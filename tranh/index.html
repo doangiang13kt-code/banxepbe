@@ -15,7 +15,7 @@
   --panel:#ffffff; --fg:#2e2a3b; --muted:#6c6680; --line:#e8e1f0; --field:#fbf9fd;
   --accent:#f4b3cb; --accent-ink:#4a2234; --accent-text:#b3487a;
   --ok:#2f7f55; --warn:#99631a; --err:#b0435a;
-  --ok-bg:#e4f5ea; --warn-bg:#fdf1dc; --err-bg:#fbe5ea; --mut-bg:#f0edf5;
+  --ok-bg:#e4f5ea; --warn-bg:#fdf1dc; --err-bg:#fbe5ea; --mut-bg:#f0edf5; --info-bg:#e2eefb; --info:#3b6fa8;
   --f-display:"Barlow Condensed","Arial Narrow",sans-serif;
   --f-body:"Be Vietnam Pro",system-ui,"Segoe UI",sans-serif;
 }
@@ -23,13 +23,16 @@
   --bg:#1d1b25; --bg-grad:linear-gradient(160deg,#231d27 0%,#1d1b25 50%,#1a2126 100%);
   --panel:#26232f; --fg:#ece8f4; --muted:#a8a1ba; --line:#3a3548; --field:#2e2a3a;
   --accent:#f4b3cb; --accent-ink:#4a2234; --accent-text:#f6bcd3;
-  --ok:#93d8b0; --warn:#f0c983; --err:#f3a2b1; --ok-bg:#243a2e; --warn-bg:#3d3323; --err-bg:#3f262d; --mut-bg:#2f2b3a; color-scheme:dark}}
+  --ok:#93d8b0; --warn:#f0c983; --err:#f3a2b1; --ok-bg:#243a2e; --warn-bg:#3d3323; --err-bg:#3f262d; --mut-bg:#2f2b3a; --info-bg:#1f2e42; --info:#9cc3ee; color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#1d1b25; --bg-grad:linear-gradient(160deg,#231d27 0%,#1d1b25 50%,#1a2126 100%);
   --panel:#26232f; --fg:#ece8f4; --muted:#a8a1ba; --line:#3a3548; --field:#2e2a3a;
   --accent:#f4b3cb; --accent-ink:#4a2234; --accent-text:#f6bcd3;
-  --ok:#93d8b0; --warn:#f0c983; --err:#f3a2b1; --ok-bg:#243a2e; --warn-bg:#3d3323; --err-bg:#3f262d; --mut-bg:#2f2b3a; color-scheme:dark}
+  --ok:#93d8b0; --warn:#f0c983; --err:#f3a2b1; --ok-bg:#243a2e; --warn-bg:#3d3323; --err-bg:#3f262d; --mut-bg:#2f2b3a; --info-bg:#1f2e42; --info:#9cc3ee; color-scheme:dark}
 *{box-sizing:border-box}
+/* mẫu sản phẩm đã bấm Lưu phân loại: xanh dương pastel; mẫu mới nạp sau đó để trắng */
+.panel.saved{background:var(--info-bg);border-color:color-mix(in srgb,var(--info) 35%,var(--line))}
+tr.saved>td{background:var(--info-bg)}
 [hidden]{display:none!important}
 body{margin:0;background:var(--bg);background-image:var(--bg-grad);background-attachment:fixed;color:var(--fg);font-family:var(--f-body);font-size:14px;line-height:1.45;padding:16px}
 h1{font-family:var(--f-display);font-size:30px;letter-spacing:.5px;margin:0;text-transform:uppercase}
@@ -113,7 +116,7 @@ tr.late>td:first-child{box-shadow:inset 4px 0 0 var(--err)}
 <div id="app" hidden>
 <header>
   <h1>Lấy file <span>in tranh</span></h1>
-  <span class="note" title="Không thấy tính năng mới thì bấm Ctrl + F5">Bản 04/11/2026 · 6</span>
+  <span class="note" title="Không thấy tính năng mới thì bấm Ctrl + F5">Bản 04/11/2026 · 7</span>
   <nav role="tablist">
     <button role="tab" data-tab="don" aria-selected="true">Đơn hàng</button>
     <button role="tab" data-tab="dl" aria-selected="false">Đơn lẻ <span class="tag err" id="dlBadge" hidden></span></button>
@@ -378,6 +381,8 @@ tr.late>td:first-child{box-shadow:inset 4px 0 0 var(--err)}
       <label class="btn"><input id="catXlsx" type="file" accept=".xlsx,.xls,.csv" hidden>Nhập Excel phân loại</label>
       <button id="catTpl">Tải file mẫu</button>
       <label class="btn"><input id="imgBulk" type="file" accept="image/png,image/jpeg" multiple hidden>Nhập ảnh hàng loạt</label>
+      <button id="catSave" class="main">💾 Lưu phân loại</button>
+      <span class="note" id="catSaveInfo"></span>
       <span class="note" id="catInfo"></span>
     </div>
     <p class="note">File Excel cần cột <b>Tên phân loại hàng</b>, thêm cột <b>Phân loại</b> và/hoặc <b>Thư mục lấy file</b>. Phân loại chưa có sẽ được tạo mới.</p>
@@ -922,7 +927,7 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
 const S = { src: null, dst: null, index: {}, handles: new Map(), orders: [], records: [], filter: 'all', cfg: { minDpi: 100, maxCrop: 25, khoThumb: true },
   machine: '', mine: { label: '', missing: [], confirms: [], names: {} }, shared: Core.mergeShared([]),
   cat: null, admin: false, leSeen: new Set(), le: [], labels: new Map(), openGroups: new Set(), imgKeys: new Set(), imgRemote: new Map() };
-const normCat = c => ({ t: 0, list: [], common: 'Chưa phân loại', products: {}, folders: {}, listings: {}, lfolders: {}, known: {}, saveDirs: {}, designDir: 'Thiet ke don le', ...(c || {}) });
+const normCat = c => ({ t: 0, list: [], common: 'Chưa phân loại', products: {}, folders: {}, listings: {}, lfolders: {}, known: {}, saveDirs: {}, designDir: 'Thiet ke don le', saved: {}, ...(c || {}) });
 S.cat = normCat();
 const PW = { salt: 'newhouse-layfilein-v1', hash: 'b77ea80da681b3c9d1f0366943dfae579bbdb2ecc63b718b9cdb688644ded6c6' };
 const PW_TK = { salt: 'newhouse-thongke-v1', hash: '8300f5632a95b76c6998f0a29e9433146e0f2d3aee8aa463d061d5b6797b5837' };
@@ -1663,12 +1668,16 @@ function renderProducts() {
   if (only) groups = groups.filter(G => G.n);
   if (q) groups = groups.map(G => G.name.toLowerCase().includes(q) ? G : { ...G, items: G.items.filter(i => i.k.toLowerCase().includes(q)) }).filter(G => G.items.length);
   const total = groups.reduce((a, G) => a + G.items.length, 0), shown = groups.slice(0, 150);
+  const isSaved = k => !!c.saved[k];
+  const unsaved = productGroups().reduce((a, G) => a + G.items.filter(i => !isSaved(i.k)).length, 0);
+  $('catSaveInfo').textContent = unsaved ? `${unsaved} mẫu mới chưa lưu (màu trắng)` : (c.savedT ? `Đã lưu hết, lần cuối ${fmtT(c.savedT)}` : '');
   $('prodCount').textContent = groups.length ? `${groups.length} sản phẩm, ${total} mẫu` + (groups.length > shown.length ? ` (hiện ${shown.length} sản phẩm đầu, hãy tìm để lọc)` : '') : '';
   $('prodGroups').innerHTML = shown.map((G, gi) => {
     const real = G.name === NO_NAME ? '' : G.name, open = S.openGroups.has(G.name) || !!q;
     const now = Core.classify({ product: real, variation: '' }, c);
-    return `<div class="panel" style="padding:10px;margin-bottom:8px">
-      <div><b>${esc(G.name)}</b> <span class="note">${G.items.length} mẫu${G.n ? `, ${G.n} dòng đơn` : ''}</span></div>
+    const allSaved = G.items.every(i => isSaved(i.k)), newCount = G.items.filter(i => !isSaved(i.k)).length;
+    return `<div class="panel ${allSaved ? 'saved' : ''}" style="padding:10px;margin-bottom:8px">
+      <div><b>${esc(G.name)}</b> <span class="note">${G.items.length} mẫu${G.n ? `, ${G.n} dòng đơn` : ''}</span>${!allSaved && newCount < G.items.length ? ` <span class="tag mut">${newCount} mẫu mới</span>` : ''}</div>
       ${groupStrip(G)}
       <div class="row end" style="margin-top:6px">
         ${real ? `<label class="f">Phân loại cả sản phẩm<select data-gl="${gi}">${catOpts(c.listings[real], 'Theo từ khóa')}</select></label>
@@ -1679,7 +1688,7 @@ function renderProducts() {
       ${open ? `<div class="tbl" style="margin-top:8px"><table><thead><tr><th>Ảnh</th><th>Mẫu (Tên phân loại hàng)</th><th class="num">Dòng đơn</th><th>Phân loại riêng</th><th>Thư mục lấy file riêng</th></tr></thead><tbody>${G.items.map(it => {
         const cur = Core.classify({ product: real, variation: it.k }, c);
         const ik = itemImgKey(it.k), has = hasImg(ik);
-        return `<tr><td>${has ? imgTag(ik, it.k) : S.cfg.khoThumb ? thumbTag(itemRel(it.k, real), it.k) : ''}
+        return `<tr class="${isSaved(it.k) ? 'saved' : ''}"><td>${has ? imgTag(ik, it.k) : S.cfg.khoThumb ? thumbTag(itemRel(it.k, real), it.k) : ''}
             <label class="link" style="cursor:pointer;font-size:12px;padding:0"><input type="file" accept="image/png,image/jpeg" multiple hidden data-up="${esc(it.k)}">Thêm ảnh</label>${has ? ` <button class="link" data-rmimg="${esc(ik)}" style="font-size:12px;padding:0 2px">Xóa ảnh</button>` : ''}</td>
           <td><b>${esc(it.k)}</b></td><td class="num">${it.n || ''}</td>
           <td><select data-pm="${esc(it.k)}" aria-label="Phân loại">${catOpts(c.products[it.k], 'Theo sản phẩm / từ khóa')}</select><div class="note">Lưu vào: ${esc(cur ? cur.name : c.common)}</div></td>
@@ -1895,6 +1904,14 @@ document.addEventListener('click', async e => {
 $('zoomClose').addEventListener('click', () => $('zoom').close());
 $('zoom').addEventListener('click', e => { if (e.target === $('zoom')) $('zoom').close(); });
 
+/* Lưu phân loại: đánh dấu mọi mẫu đang có là đã kiểm tra; mẫu nạp vào sau vẫn trắng cho tới lần lưu sau */
+$('catSave').addEventListener('click', async () => {
+  const now = Date.now(); let n = 0;
+  for (const G of productGroups()) for (const it of G.items) if (!S.cat.saved[it.k]) { S.cat.saved[it.k] = now; n++; }
+  S.cat.savedT = now;
+  await saveCat();
+  $('catSaveInfo').textContent = `Đã lưu phân loại${n ? `, ${n} mẫu mới chuyển xanh` : ''} lúc ${fmtT(now)}.`;
+});
 let prodTimer;
 $('prodQ').addEventListener('input', () => { clearTimeout(prodTimer); prodTimer = setTimeout(renderProducts, 250); });
 $('prodOnly').addEventListener('change', renderProducts);
