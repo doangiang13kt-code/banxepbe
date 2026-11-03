@@ -65,6 +65,7 @@ th,td{padding:7px 9px;border-bottom:1px solid var(--line);vertical-align:top}
 tr:last-child td{border-bottom:0}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 td select{max-width:320px;padding:3px 5px}
+tr.gfirst>td{border-top:2px solid var(--line)}
 tr.late>td{background:var(--err-bg)}
 tr.late>td:first-child{box-shadow:inset 4px 0 0 var(--err)}
 .lateTag{color:var(--err);font-weight:700;font-size:12px;margin-top:4px}
@@ -112,7 +113,7 @@ tr.late>td:first-child{box-shadow:inset 4px 0 0 var(--err)}
 <div id="app" hidden>
 <header>
   <h1>Lấy file <span>in tranh</span></h1>
-  <span class="note" title="Không thấy tính năng mới thì bấm Ctrl + F5">Bản 04/11/2026 · 4</span>
+  <span class="note" title="Không thấy tính năng mới thì bấm Ctrl + F5">Bản 04/11/2026 · 5</span>
   <nav role="tablist">
     <button role="tab" data-tab="don" aria-selected="true">Đơn hàng</button>
     <button role="tab" data-tab="dl" aria-selected="false">Đơn lẻ <span class="tag err" id="dlBadge" hidden></span></button>
@@ -591,7 +592,7 @@ const Core = (() => {
       const p = parseVariation({ variation: r[c.var], skuVar: r[c.skuV], skuProd: r[c.skuP], product: r[c.prod] });
       /* mã đơn dùng trong app = Mã đơn hàng; giữ thêm mã vận đơn để gắn phiếu đặt tên theo mã vận đơn */
       const track = c.track >= 0 ? String(r[c.track] ?? '').trim() : '';
-      out.push({ orderId: String(r[c.id]).trim(), track, orderDate: String(r[c.date] ?? '').slice(0, 10), variation: String(r[c.var] ?? ''),
+      out.push({ orderId: String(r[c.id]).trim(), track, orderAt: String(r[c.date] ?? '').trim().replace('T', ' ').slice(0, 16), orderDate: String(r[c.date] ?? '').slice(0, 10), variation: String(r[c.var] ?? ''),
         product: String(r[c.prod] ?? ''), skuProd: String(r[c.skuP] ?? '').trim(), qty: Math.max(1, parseInt(r[c.qty], 10) || 1), ...p });
     }
     return { orders: out, skipped };
@@ -1070,6 +1071,7 @@ function addOrders(list) {
   for (const o of list) {
     o.key = lineKey(o);
     const old = o.orderId && have.get(o.key);
+    if (old && o.orderAt && !old.orderAt) old.orderAt = o.orderAt;
     if (old) { if ('retake' in o) { old.retake = o.retake; added.push(old); } continue; }
     have.set(o.key, o);
     o.id = crypto.randomUUID ? crypto.randomUUID() : String(Math.random());
@@ -1147,9 +1149,15 @@ function analyze() {
   injectLe();
   const ready = Object.keys(S.index).length > 0;
   const recs = latestRecs();
+  let autoTaken = 0;
   for (const o of S.orders) {
     if (!o.addedT) o.addedT = o.le ? ((leOf(o) || {}).t || Date.now()) : Date.now();
-    const r = recs.get(o.key);
+    let r = recs.get(o.key);
+    /* đơn đặt trước 16h00 03/11/2026: tự ghi “đã lấy file” (theo ngày đặt), sang thẳng Đang làm */
+    if (!r && o.retake === undefined && preTaken(o)) {
+      r = makeRecord(o, 'Đơn cũ, coi như đã lấy file', '', { date: o.orderDate });
+      S.records.push(r); recs.set(o.key, r); autoTaken++;
+    }
     /* đã chỉnh trạng thái sản xuất (xong, xong mà hủy, hủy đơn, lấy tồn kho): rời Phân tích đơn */
     if (r && r.prod && !o.retake) { o.status = 'finished'; continue; }
     if (o.retake === false) { o.status = 'taken'; continue; }
@@ -1163,6 +1171,7 @@ function analyze() {
     o.status = o.match ? o.match.status : 'wait';
   }
   kvSet('orders', S.orders);
+  if (autoTaken) saveStats();
   if (ready) {
     const miss = {};
     for (const o of S.orders) {
@@ -1189,18 +1198,39 @@ async function setProd(r, v) {
 /* đơn đặt trước ngày 04/11/2026 thường đã làm ngoài app: cho chỉnh trạng thái kể cả khi chưa lấy file qua app */
 const OLD_CUTOFF = '2026-11-04';
 const isOldOrder = o => !o.le && !!o.orderDate && o.orderDate < OLD_CUTOFF;
-async function setOrderProd(o, v) {
-  const label = `${isAuto(o) ? 'nhập tay' : shortId(o.orderId)}: ${codeLabel(o)}`;
-  if (v === 'huydon' && !confirm(`Hủy đơn ${label}?`)) return;
-  const r = latestRecs().get(o.key);
-  if (r && !r.prod && !o.retake) await setProd(r, v);
-  else if (v === 'huydon') await record(o, 'Hủy đơn', '', { prod: 'huydon', prodT: Date.now(), prodBy: S.machine });
-  else if (isOldOrder(o)) {
-    if (!confirm(`Đơn ${label} đặt ngày ${o.orderDate.split('-').reverse().join('/')}, chưa lấy file qua app.\nĐánh dấu “${PROD[v][1]}”?`)) return;
-    /* ghi vào thống kê theo ngày đặt của đơn, không dồn vào hôm nay */
-    await record(o, 'Đơn cũ, làm ngoài app', '', { prod: v, prodT: Date.now(), prodBy: S.machine, date: o.orderDate, stockUsed: v === 'huy' ? 0 : undefined });
+/* đơn Shopee đặt trước 16h00 ngày 03/11/2026: coi như đã lấy file, không lấy file qua app nữa */
+const PRE_TAKEN = '2026-11-03 16:00';
+const preTaken = o => !o.le && !isAuto(o) && (o.orderAt && o.orderAt.length >= 16 ? o.orderAt < PRE_TAKEN : !!o.orderDate && o.orderDate < PRE_TAKEN.slice(0, 10));
+/* trạng thái theo cả đơn: mọi mã tranh còn đang xử lý của cùng mã đơn */
+const orderLines = id => S.orders.filter(o => o.orderId === id && !['finished', 'taken'].includes(o.status));
+const lineCanFinish = o => o.status === 'done' || isOldOrder(o);
+function groupActions(id) {
+  const lines = orderLines(id); if (!lines.length) return '';
+  const left = lines.filter(o => !lineCanFinish(o)).length;
+  return (left ? `<span class="note">Còn ${left}/${lines.length} mã chưa lấy file</span><br>`
+    : `<button class="link" data-px="${esc(id)}" data-v="xong">Đã xong</button><br><button class="link" data-px="${esc(id)}" data-v="huy">Xong mà hủy</button><br>`)
+    + `<button class="link" data-px="${esc(id)}" data-v="huydon">Hủy đơn</button>`;
+}
+async function setGroupProd(id, v) {
+  const lines = orderLines(id); if (!lines.length) return;
+  const o0 = lines[0], name = `${isAuto(o0) ? 'nhập tay' : shortId(id)}${lines.length > 1 ? ` (${lines.length} mã tranh)` : `: ${codeLabel(o0)}`}`;
+  const recs = latestRecs(), outside = lines.filter(o => !(recs.get(o.key) && !recs.get(o.key).prod && !o.retake) && isOldOrder(o));
+  if (v !== 'huydon' && lines.some(o => !lineCanFinish(o))) { alert('Đơn này còn mã tranh chưa lấy file.'); return; }
+  const msg = v === 'huydon' ? `Hủy đơn ${name}?` : `Đánh dấu “${PROD[v][1]}” cho đơn ${name}?`
+    + (outside.length ? `\n\nĐơn đặt ngày ${o0.orderDate.split('-').reverse().join('/')}, ${outside.length} mã chưa lấy file qua app: ghi thống kê theo ngày đặt.` : '');
+  if (!confirm(msg)) return;
+  const now = Date.now(), mark = { prod: v, prodT: now, prodBy: S.machine };
+  for (const o of lines) {
+    const r = recs.get(o.key);
+    if (r && !r.prod && !o.retake) { Object.assign(r, mark, { t: now }); if (v === 'huy') r.stockUsed = r.stockUsed || 0; }
+    else if (v === 'huydon') S.records.push(makeRecord(o, 'Hủy đơn', '', mark));
+    /* đơn cũ làm ngoài app: ghi vào thống kê theo ngày đặt của đơn, không dồn vào hôm nay */
+    else if (isOldOrder(o)) S.records.push(makeRecord(o, 'Đơn cũ, làm ngoài app', '', { ...mark, date: o.orderDate, ...(v === 'huy' ? { stockUsed: 0 } : {}) }));
+    delete o.retake;
   }
-  delete o.retake;
+  await saveStats();
+  const L = o0.le && S.le.find(x => !x.del && x.code === id);
+  if (L && leState(L) === 'cho') { S.leSeen.add(L.id); kvSet('leSeen', [...S.leSeen]); shipAlert([L]); }
   analyze();
 }
 const stockLeft = r => r.count - (r.stockUsed || 0);
@@ -2017,7 +2047,10 @@ function renderOrders() {
   document.querySelectorAll('#cards .card').forEach(c => c.onclick = () => { S.filter = c.dataset.f; renderOrders(); });
   const list = S.orders.filter(o => inFilter(o, S.filter));
   $('emptyRows').hidden = S.orders.some(o => o.status !== 'finished');
-  $('rows').innerHTML = list.map(o => {
+  /* gộp các mã tranh cùng một mã đơn: ngày, mã đơn, phiếu gửi và nút trạng thái chỉ hiện một lần cho cả đơn */
+  const groups = new Map();
+  for (const o of list) (groups.get(o.orderId) || groups.set(o.orderId, []).get(o.orderId)).push(o);
+  $('rows').innerHTML = [...groups.values()].map(g => g.map((o, gi) => {
     const m = o.match;
     const sel = m && (['review', 'resize', 'ok'].includes(o.status) && m.candidates.length > 1 || o.status === 'missing' && m.candidates.length && o.size)
       ? `<select data-pick="${o.id}" aria-label="Chọn file"><option value="">${m.files[0] ? 'Đổi file…' : o.status === 'missing' ? 'Dùng file gần giống…' : 'Chọn file…'}</option>${m.candidates.map(c => `<option value="${esc(c.rel)}">${esc(c.rel)}</option>`).join('')}</select>` : '';
@@ -2025,21 +2058,21 @@ function renderOrders() {
       : o.status === 'done' ? esc(o.outName || '') : m && m.files.length ? m.files.map(f => esc(f.rel)).join('<br>') : '';
     const cat = catOf(o), lo = cat && cat.linkOnly;
     const [cls, label] = lo && ['ok', 'resize'].includes(o.status) ? ['ok', 'Sẵn sàng, chỉ ghi đường dẫn'] : TAGS[o.status] || TAGS.wait;
-    const late = isLate(o);
-    return `<tr class="${late ? 'late' : ''}">
-      <td>${esc(o.orderDate)}${late ? `<div class="lateTag">Quá ${ageText(o.addedT)} chưa xong</div>` : ''}</td><td>${o.le ? leCell(o) : isAuto(o) ? 'Nhập tay' : `<b title="Mã đơn hàng">${esc(shortId(o.orderId))}</b>${o.track ? `<div class="note" title="Mã vận đơn">${esc(o.track)}</div>` : ''}`}${isAuto(o) ? '' : labelCell(o.orderId)}</td>
+    const lateO = g.find(isLate), late = !!lateO, span = g.length > 1 ? ` rowspan="${g.length}"` : '';
+    const head = gi === 0 ? `<td${span}>${esc(o.orderDate)}${late ? `<div class="lateTag">Quá ${ageText(lateO.addedT)} chưa xong</div>` : ''}</td>
+      <td${span}>${o.le ? leCell(o) : isAuto(o) ? 'Nhập tay' : `<b title="Mã đơn hàng">${esc(shortId(o.orderId))}</b>${o.track ? `<div class="note" title="Mã vận đơn">${esc(o.track)}</div>` : ''}`}${g.length > 1 ? `<div class="note">${g.length} mã tranh</div>` : ''}${isAuto(o) ? '' : labelCell(o.orderId)}</td>` : '';
+    return `<tr class="${late ? 'late' : ''} ${gi === 0 ? 'gfirst' : ''}">
+      ${head}
       <td>${o.code ? `<b>${esc(codeLabel(o))}</b>` : `<input data-code="${o.id}" placeholder="Nhập mã" size="9" style="padding:2px 4px">`}${o.gift ? ' <span class="tag mut">tặng</span>' : ''}<div class="note">${esc(o.variation)}</div><div class="note">${esc(cat ? cat.name : S.cat.common)} → ${lo ? 'chỉ ghi đường dẫn' : esc(dirLabel(cat))}</div></td>
       <td>${o.size ? Core.sizeKey(o.size.w, o.size.h) : `<input data-size="${o.id}" placeholder="40x60" size="6" style="padding:2px 4px">`}</td>
       <td class="num">${o.qty}</td>
       <td class="num"><input data-pcs="${o.id}" type="number" min="1" value="${o.qty * o.pieces}" aria-label="Tổng tấm" style="width:62px;padding:2px 4px" ${o.status === 'done' ? 'disabled' : ''}></td>
       <td>${rowThumb(o)}<label class="link noprint" style="cursor:pointer;font-size:12px;padding:0;white-space:nowrap"><input type="file" accept="image/png,image/jpeg" multiple hidden data-upo="${o.id}">+ Thêm ảnh</label></td>
       <td><span class="path">${file}</span>${sel}${o.warn ? `<div class="warnline">${esc(o.warn)}</div>` : ''}</td>
-      <td><span class="tag ${cls}">${label}</span>${m && m.note && o.status !== 'done' ? `<div class="note">${esc(m.note)}</div>` : ''}${o.err ? `<div class="err">${esc(o.err)}</div>` : ''}${o.status === 'missing' && o.code ? (S.shared.live[Core.modelKey(o)] ? '<div class="note"><span class="tag ok">Thiết kế đã xác nhận</span> Bấm Quét lại kho để lấy file</div>' : `<div style="margin-top:4px" class="noprint"><button class="link" data-cfo="${esc(Core.modelKey(o))}" data-n="${Math.round(o.pieces)}">Xác nhận đã có file</button></div>`) : ''}</td>
-      <td class="noprint" style="white-space:nowrap">${o.status === 'design'
-        ? `<button class="link" data-dz="${o.id}">Đã thiết kế xong</button><br><label class="link" style="cursor:pointer;padding:2px 4px"><input type="file" accept="image/*,.tif,.tiff,.psd,.pdf" multiple hidden data-dzf="${o.id}">Chọn file thiết kế…</label><br>` : ''}${o.status === 'done' || (isOldOrder(o) && o.status !== 'taken')
-        ? `<button class="link" data-px="${o.id}" data-v="xong">Đã xong</button><br><button class="link" data-px="${o.id}" data-v="huy">Xong mà hủy</button><br>`
-        : ''}<button class="link" data-px="${o.id}" data-v="huydon">Hủy đơn</button></td></tr>`;
-  }).join('');
+      <td><span class="tag ${cls}">${label}</span>${m && m.note && o.status !== 'done' ? `<div class="note">${esc(m.note)}</div>` : ''}${o.err ? `<div class="err">${esc(o.err)}</div>` : ''}${o.status === 'missing' && o.code ? (S.shared.live[Core.modelKey(o)] ? '<div class="note"><span class="tag ok">Thiết kế đã xác nhận</span> Bấm Quét lại kho để lấy file</div>' : `<div style="margin-top:4px" class="noprint"><button class="link" data-cfo="${esc(Core.modelKey(o))}" data-n="${Math.round(o.pieces)}">Xác nhận đã có file</button></div>`) : ''}${o.status === 'design'
+        ? `<div class="noprint" style="margin-top:4px"><button class="link" data-dz="${o.id}">Đã thiết kế xong</button><br><label class="link" style="cursor:pointer;padding:2px 4px"><input type="file" accept="image/*,.tif,.tiff,.psd,.pdf" multiple hidden data-dzf="${o.id}">Chọn file thiết kế…</label></div>` : ''}</td>
+      ${gi === 0 ? `<td class="noprint"${span} style="white-space:nowrap">${groupActions(o.orderId)}</td>` : ''}</tr>`;
+  }).join('')).join('');
   document.querySelectorAll('[data-pick]').forEach(s => s.onchange = () => { const o = S.orders.find(x => x.id === s.dataset.pick); o.chosen = s.value; analyze(); });
   document.querySelectorAll('[data-code]').forEach(s => s.onchange = () => { const o = S.orders.find(x => x.id === s.dataset.code), c = Core.parseCodeText(s.value); if (c) { o.code = c.code; o.variant = c.variant; analyze(); } });
   document.querySelectorAll('[data-size]').forEach(s => s.onchange = () => { const o = S.orders.find(x => x.id === s.dataset.size), z = Core.parseSizeText(s.value); if (z) { o.size = z; analyze(); } });
@@ -2057,7 +2090,7 @@ function renderOrders() {
     for (const f of i.files) { try { await saveImg(imgId(k, no++), f); } catch (err) { alert(`Không đọc được ảnh ${f.name}: ${err.message}`); } }
     refreshImgs();
   });
-  document.querySelectorAll('[data-px]').forEach(b => b.onclick = () => setOrderProd(S.orders.find(x => x.id === b.dataset.px), b.dataset.v));
+  document.querySelectorAll('[data-px]').forEach(b => b.onclick = () => setGroupProd(b.dataset.px, b.dataset.v));
   updateRun();
 }
 function updateRun() { $('run').disabled = !S.dst || !S.orders.some(o => ['ok', 'resize'].includes(o.status)); }
@@ -2144,10 +2177,10 @@ async function produce(file, rel, o, dir, baseName) {
   await writeParts(dir, `${baseName}.png`, r.parts);
   return { name: `${baseName}.png`, dpi: r.dpi, note: note + ' (lưu PNG không nén mất dữ liệu)' };
 }
-async function record(o, source, file, extra = {}) {
-  S.records.push({ id: crypto.randomUUID ? crypto.randomUUID() : String(Math.random()), t: Date.now(), date: today(), orderKey: o.key || '', orderId: isAuto(o) ? '' : o.orderId,
+async function record(o, source, file, extra = {}) { S.records.push(makeRecord(o, source, file, extra)); await saveStats(); }
+function makeRecord(o, source, file, extra = {}) {
+  return ({ id: crypto.randomUUID ? crypto.randomUUID() : String(Math.random()), t: Date.now(), date: today(), orderKey: o.key || '', orderId: isAuto(o) ? '' : o.orderId,
     code: codeLabel(o), variation: o.variation || '', w: o.size ? o.size.w : 0, h: o.size ? o.size.h : 0, count: Math.round(o.qty * o.pieces), source, file: file || '', loadT: o.addedT || Date.now(), ...extra });
-  await saveStats();
 }
 async function saveStats() { await kvSet('records', S.records); await syncStats(); }
 async function syncStats() {
