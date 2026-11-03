@@ -112,6 +112,7 @@ tr.late>td:first-child{box-shadow:inset 4px 0 0 var(--err)}
 <div id="app" hidden>
 <header>
   <h1>Lấy file <span>in tranh</span></h1>
+  <span class="note" title="Không thấy tính năng mới thì bấm Ctrl + F5">Bản 04/11/2026 · 2</span>
   <nav role="tablist">
     <button role="tab" data-tab="don" aria-selected="true">Đơn hàng</button>
     <button role="tab" data-tab="dl" aria-selected="false">Đơn lẻ <span class="tag err" id="dlBadge" hidden></span></button>
@@ -145,9 +146,9 @@ tr.late>td:first-child{box-shadow:inset 4px 0 0 var(--err)}
       Kéo file Excel đơn hàng Shopee vào đây, hoặc
       <label class="btn"><input id="xlsx" type="file" accept=".xlsx,.xls,.csv" hidden>chọn file</label>
     </div>
-    <div class="row" style="margin-top:8px">
-      <label class="btn"><input id="labelBulk" type="file" accept="application/pdf,image/png,image/jpeg" multiple hidden>Tải loạt phiếu gửi hàng</label>
-      <span class="note grow" id="labelInfo">Chọn nhiều file PDF một lần, tên file là mã vận đơn (ví dụ SPXVN012345678.pdf), app tự gắn vào đúng đơn.</span>
+    <div class="row" style="margin-top:10px;padding:10px 12px;border-radius:10px;background:var(--mut-bg)">
+      <label class="btn main" style="background:var(--accent);color:var(--accent-ink);border-color:var(--accent)"><input id="labelBulk" type="file" accept="application/pdf,image/png,image/jpeg" multiple hidden>📄 Tải loạt phiếu gửi hàng</label>
+      <span class="note grow" id="labelInfo">Chọn nhiều file PDF một lần. Tên file là <b>mã đơn hàng</b> (ví dụ 2611040AAA111.pdf), app tự gắn vào đúng đơn.</span>
     </div>
     <div class="note" id="xlsxInfo" style="margin-top:6px"></div>
     <div class="row end" style="margin-top:12px">
@@ -168,6 +169,7 @@ tr.late>td:first-child{box-shadow:inset 4px 0 0 var(--err)}
       <h2 class="grow" style="margin:0">Phân tích đơn</h2>
       <button id="copyLinks" class="noprint" hidden>Chép các đường dẫn</button>
       <button id="rescan" class="noprint">Quét lại kho</button>
+      <button id="labelBulk2" class="noprint">Tải loạt phiếu gửi</button>
       <button id="run" class="main noprint" disabled>Lấy file</button>
     </div>
     <div id="ordWarn" class="noprint"></div>
@@ -587,9 +589,9 @@ const Core = (() => {
       /* chỉ lấy đơn “Chờ giao hàng”, các trạng thái khác đếm để báo lại */
       if (c.st >= 0 && norm(r[c.st]) !== 'chờ giao hàng') { const s = String(r[c.st] ?? '').trim() || '(trống)'; skipped[s] = (skipped[s] || 0) + 1; continue; }
       const p = parseVariation({ variation: r[c.var], skuVar: r[c.skuV], skuProd: r[c.skuP], product: r[c.prod] });
-      /* mã đơn dùng trong app = Mã vận đơn; đơn chưa có mã vận đơn thì tạm dùng Mã đơn hàng */
+      /* mã đơn dùng trong app = Mã đơn hàng; giữ thêm mã vận đơn để gắn phiếu đặt tên theo mã vận đơn */
       const track = c.track >= 0 ? String(r[c.track] ?? '').trim() : '';
-      out.push({ orderId: track || String(r[c.id]), shopeeId: String(r[c.id]), noTrack: !track, orderDate: String(r[c.date] ?? '').slice(0, 10), variation: String(r[c.var] ?? ''),
+      out.push({ orderId: String(r[c.id]).trim(), track, orderDate: String(r[c.date] ?? '').slice(0, 10), variation: String(r[c.var] ?? ''),
         product: String(r[c.prod] ?? ''), skuProd: String(r[c.skuP] ?? '').trim(), qty: Math.max(1, parseInt(r[c.qty], 10) || 1), ...p });
     }
     return { orders: out, skipped };
@@ -1077,7 +1079,7 @@ function addOrders(list) {
   analyze();
   return added;
 }
-/* mã đơn = Mã vận đơn trong file Excel (đơn lẻ: mã tự tạo) */
+/* mã đơn = Mã đơn hàng trong file Excel (đơn lẻ: mã tự tạo) */
 const shortId = id => String(id || '').replace(/\s+/g, '');
 /* đơn tải lên quá 36 giờ mà chưa “Đã xong” */
 const LATE_MS = 36 * 3600 * 1000;
@@ -1472,15 +1474,20 @@ document.addEventListener('change', async e => {
   i.value = ''; renderOrders(); renderProd();
 });
 document.addEventListener('click', e => { const b = e.target.closest && e.target.closest('[data-plp]'); if (b) printLabel(b.dataset.plp); });
-/* tải loạt phiếu: tên file là mã vận đơn; tên có thêm chữ thì tìm mã đơn nằm trong tên */
+/* tải loạt phiếu: tên file là mã đơn hàng (mã vận đơn cũng nhận); tên có thêm chữ thì tìm mã nằm trong tên */
+$('labelBulk2').addEventListener('click', () => $('labelBulk').click());
 $('labelBulk').addEventListener('change', async e => {
   const files = [...e.target.files]; e.target.value = '';
   if (!files.length) return;
+  $('labelInfo').scrollIntoView({ block: 'center' });
   const ids = [...new Set([...S.orders.map(o => o.orderId), ...S.records.map(r => r.orderId), ...S.le.map(L => L.code)].filter(Boolean))];
+  const byTrack = new Map(S.orders.filter(o => o.track).map(o => [o.track.toUpperCase(), o.orderId]));
   const ok = [], loose = [], fail = [];
   for (const f of files) {
     const stem = f.name.replace(/\.[^.]+$/, '').trim(), up = stem.toUpperCase();
-    const id = ids.find(x => x.toUpperCase() === up) || ids.filter(x => x.length >= 6 && up.includes(x.toUpperCase())).sort((a, b) => b.length - a.length)[0];
+    const id = ids.find(x => x.toUpperCase() === up) || byTrack.get(up)
+      || ids.filter(x => x.length >= 6 && up.includes(x.toUpperCase())).sort((a, b) => b.length - a.length)[0]
+      || [...byTrack.entries()].filter(([t]) => t.length >= 6 && up.includes(t)).map(([, v]) => v)[0];
     $('labelInfo').textContent = `Đang lưu ${ok.length + loose.length + fail.length + 1}/${files.length}: ${f.name}`;
     try { await saveLabel(id || stem, f); (id ? ok : loose).push(id || stem); } catch (err) { fail.push(`${f.name} (${err.message})`); }
   }
@@ -1996,7 +2003,7 @@ function renderOrders() {
     const [cls, label] = lo && ['ok', 'resize'].includes(o.status) ? ['ok', 'Sẵn sàng, chỉ ghi đường dẫn'] : TAGS[o.status] || TAGS.wait;
     const late = isLate(o);
     return `<tr class="${late ? 'late' : ''}">
-      <td>${esc(o.orderDate)}${late ? `<div class="lateTag">Quá ${ageText(o.addedT)} chưa xong</div>` : ''}</td><td>${o.le ? leCell(o) : isAuto(o) ? 'Nhập tay' : `<b title="${esc(o.shopeeId ? 'Mã đơn hàng ' + o.shopeeId : o.orderId)}">${esc(shortId(o.orderId))}</b>${o.noTrack ? '<div class="warnline">Chưa có mã vận đơn</div>' : ''}`}${isAuto(o) ? '' : labelCell(o.orderId)}</td>
+      <td>${esc(o.orderDate)}${late ? `<div class="lateTag">Quá ${ageText(o.addedT)} chưa xong</div>` : ''}</td><td>${o.le ? leCell(o) : isAuto(o) ? 'Nhập tay' : `<b title="Mã đơn hàng">${esc(shortId(o.orderId))}</b>${o.track ? `<div class="note" title="Mã vận đơn">${esc(o.track)}</div>` : ''}`}${isAuto(o) ? '' : labelCell(o.orderId)}</td>
       <td>${o.code ? `<b>${esc(codeLabel(o))}</b>` : `<input data-code="${o.id}" placeholder="Nhập mã" size="9" style="padding:2px 4px">`}${o.gift ? ' <span class="tag mut">tặng</span>' : ''}<div class="note">${esc(o.variation)}</div><div class="note">${esc(cat ? cat.name : S.cat.common)} → ${lo ? 'chỉ ghi đường dẫn' : esc(dirLabel(cat))}</div></td>
       <td>${o.size ? Core.sizeKey(o.size.w, o.size.h) : `<input data-size="${o.id}" placeholder="40x60" size="6" style="padding:2px 4px">`}</td>
       <td class="num">${o.qty}</td>
