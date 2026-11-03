@@ -61,6 +61,18 @@ td select{max-width:320px;padding:3px 5px}
 .note{color:var(--muted);font-size:12.5px}
 .warnline{color:var(--warn);font-size:12px}
 .path{word-break:break-all;font-size:12px;color:var(--muted)}
+.thumb{width:64px;height:64px;object-fit:contain;background:var(--field);border:1px solid var(--line);border-radius:6px;cursor:zoom-in;display:block;margin-bottom:4px}
+.thumb.none{cursor:default;opacity:.35}
+#zoom{border:0;padding:0;background:transparent;max-width:96vw;max-height:94vh}
+#zoom::backdrop{background:rgba(0,0,0,.75)}
+#zoom figure{margin:0;display:flex;flex-direction:column;align-items:center;gap:8px}
+#zoomBox{display:flex;gap:8px;overflow:auto;max-width:94vw}
+#zoomBox{width:94vw;justify-content:center}
+#zoomBox img{flex:1 1 0;min-width:160px;max-width:640px;max-height:80vh;object-fit:contain;background:#fff;border-radius:6px}
+#zoomBox img:only-child{flex:none;max-width:94vw;max-height:84vh}
+.tw{position:relative;display:inline-block}
+.tw i{position:absolute;right:3px;bottom:7px;background:rgba(0,0,0,.7);color:#fff;font-style:normal;font-size:10px;padding:0 4px;border-radius:4px;pointer-events:none}
+#zoom figcaption{color:#fff;font-size:13px;text-align:center}
 .bar{height:8px;background:var(--line);border-radius:9px;overflow:hidden;margin-top:8px}
 .bar i{display:block;height:100%;background:var(--accent);width:0}
 #login{min-height:80vh;display:flex;align-items:center;justify-content:center}
@@ -251,9 +263,11 @@ td select{max-width:320px;padding:3px 5px}
     <div class="row" style="margin-bottom:8px">
       <label class="btn"><input id="catXlsx" type="file" accept=".xlsx,.xls,.csv" hidden>Nhập Excel phân loại</label>
       <button id="catTpl">Tải file mẫu</button>
+      <label class="btn"><input id="imgBulk" type="file" accept="image/png,image/jpeg" multiple hidden>Nhập ảnh hàng loạt</label>
       <span class="note" id="catInfo"></span>
     </div>
     <p class="note">File Excel cần cột <b>Tên phân loại hàng</b>, thêm cột <b>Phân loại</b> và/hoặc <b>Thư mục lấy file</b>. Phân loại chưa có sẽ được tạo mới.</p>
+    <p class="note">Ảnh hàng loạt: đặt tên file ảnh đúng tên mẫu, ví dụ <b>NN268-1.jpg</b>, <b>decal - N6.png</b>, chọn nhiều file một lần. App thu nhỏ ảnh còn khoảng 600px rồi lưu chung cho các máy.</p>
     <div class="row" style="margin-bottom:8px">
       <input id="prodQ" placeholder="Tìm tên sản phẩm hoặc mẫu" size="32" aria-label="Tìm sản phẩm">
       <label class="note"><input type="checkbox" id="prodOnly"> Chỉ sản phẩm có trong đơn đang nạp</label>
@@ -268,6 +282,7 @@ td select{max-width:320px;padding:3px 5px}
       <label class="f">Tên máy (tự đặt)<input id="cfgLabel" placeholder="Ví dụ thietke-03" size="20"></label>
       <label class="f">Đường dẫn đầy đủ của thư mục lấy file trên máy này<input id="cfgBase" placeholder="E:\Giang\Mau tranh" size="32"></label>
     </div>
+    <label class="note" style="display:block;margin-top:6px"><input type="checkbox" id="cfgKhoThumb"> Khi mẫu chưa có ảnh nhập, tự tạo ảnh xem trước từ file trong kho (chậm với file nặng)</label>
     <p class="note">Trình duyệt không cho biết vị trí thật của thư mục, nên điền đường dẫn này để phân loại “chỉ ghi đường dẫn” hiện ra đường dẫn đầy đủ, dán được vào Explorer.</p>
     <p class="note">ID do app tạo và gắn với trình duyệt trên máy này. Xóa dữ liệu trình duyệt hoặc đổi trình duyệt sẽ ra ID mới; khi đó bạn chỉ cần gán tên người cho ID mới.</p>
   </div>
@@ -281,6 +296,8 @@ td select{max-width:320px;padding:3px 5px}
   </div>
 </section>
 </div>
+
+<dialog id="zoom"><figure><div id="zoomBox"></div><figcaption id="zoomCap"></figcaption><button id="zoomClose">Đóng</button></figure></dialog>
 
 <script id="core">
 /* Phần lõi: đọc mã, ghép file, chỉnh TIFF/JPG/PNG, tính thống kê — không đụng giao diện */
@@ -483,7 +500,7 @@ const Core = (() => {
     };
     const one = async (t, def) => { const v = await nums(t); return v ? v[0] : def; };
     return { le, tags, width: await one(256), height: await one(257), compression: await one(259, 1), samples: await one(277, 1),
-      planar: await one(284, 1), rowsPerStrip: await one(278, 0), bits: await nums(258) || [1],
+      planar: await one(284, 1), photometric: await one(262, 2), rowsPerStrip: await one(278, 0), bits: await nums(258) || [1],
       stripOffsets: await nums(273), stripCounts: await nums(279) };
   }
 
@@ -593,6 +610,29 @@ const Core = (() => {
       await write(out);
     }
     return { dpi: Math.min(dpiX, dpiY) };
+  }
+
+  /* Ảnh xem trước từ TIFF không nén: đọc cách hàng, cách cột; CMYK đổi sang RGB gần đúng (không theo hồ sơ màu) */
+  async function tiffThumb(blob, info, max) {
+    if (!info || info.bigTiff || info.compression !== 1 || info.planar !== 1 || info.bits.some(b => b !== 8)) return null;
+    const ph = info.photometric;
+    if (![0, 1, 2, 5].includes(ph)) return null;
+    const s = Math.max(1, Math.ceil(Math.max(info.width, info.height) / max));
+    const w = Math.max(1, Math.floor(info.width / s)), h = Math.max(1, Math.floor(info.height / s));
+    const spp = info.samples, row = info.width * spp, rps = info.rowsPerStrip || info.height;
+    const out = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) {
+      const sy = y * s, st = Math.floor(sy / rps), off = info.stripOffsets[st] + (sy - st * rps) * row;
+      const d = new Uint8Array(await blob.slice(off, off + row).arrayBuffer());
+      for (let x = 0; x < w; x++) {
+        const p = x * s * spp, o = (y * w + x) * 4;
+        if (ph === 5) { const k = 255 - d[p + 3]; out[o] = (255 - d[p]) * k / 255; out[o + 1] = (255 - d[p + 1]) * k / 255; out[o + 2] = (255 - d[p + 2]) * k / 255; }
+        else if (ph === 2) { out[o] = d[p]; out[o + 1] = d[p + 1]; out[o + 2] = d[p + 2]; }
+        else { out[o] = out[o + 1] = out[o + 2] = ph === 0 ? 255 - d[p] : d[p]; }
+        out[o + 3] = 255;
+      }
+    }
+    return { w, h, data: out };
   }
 
   /* ---- JPG / PNG: vá độ phân giải, không nén lại ---- */
@@ -745,7 +785,7 @@ const Core = (() => {
   }
 
   return { similar, productKey, classify, modelKey, mergeShared, designSummary, parseVariation, parseSizeText, parseCodeText, parseFilePath, buildIndex, matchOrder, parseRows, sameSize, ratio, sizeKey,
-    tiffInfo, tiffResizeParts, cropRect, tiffCrop, jpegResizeParts, pngResizeParts, physChunk,
+    tiffInfo, tiffThumb, tiffResizeParts, cropRect, tiffCrop, jpegResizeParts, pngResizeParts, physChunk,
     areaM2, frameM, periodKey, summarize, mergeRecords, round };
 })();
 if (typeof module !== 'undefined') module.exports = Core;
@@ -757,7 +797,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const S = { src: null, dst: null, index: {}, handles: new Map(), orders: [], records: [], filter: 'all', cfg: { minDpi: 100, maxCrop: 25 },
   machine: '', mine: { label: '', missing: [], confirms: [], names: {} }, shared: Core.mergeShared([]),
-  cat: null, catDirs: {}, openGroups: new Set() };
+  cat: null, catDirs: {}, openGroups: new Set(), imgKeys: new Set(), imgRemote: new Map() };
 const normCat = c => ({ t: 0, list: [], common: 'Chưa phân loại', products: {}, folders: {}, listings: {}, lfolders: {}, known: {}, ...(c || {}) });
 S.cat = normCat();
 const PW = { salt: 'newhouse-layfilein-v1', hash: 'b77ea80da681b3c9d1f0366943dfae579bbdb2ecc63b718b9cdb688644ded6c6' };
@@ -804,6 +844,8 @@ async function enter() {
   S.cat = normCat(await kvGet('cat'));
   S.catDirs = await kvGet('catDirs') || {};
   $('cfgBase').value = S.cfg.srcBase || '';
+  $('cfgKhoThumb').checked = !!S.cfg.khoThumb;
+  S.imgKeys = new Set(await kvGet('imgKeys') || []); rebuildImgIndex();
   renderCat();
   $('cfgId').value = S.machine; $('cfgLabel').value = S.mine.label;
   $('minDpi').value = S.cfg.minDpi; $('maxCrop').value = S.cfg.maxCrop;
@@ -1054,9 +1096,12 @@ function renderProducts() {
         <button class="link" data-gt="${gi}">${open ? 'Ẩn từng mẫu' : 'Xem từng mẫu'}</button>
       </div>
       ${real ? `<div class="note">Lưu vào: ${esc(now ? now.name : c.common)}</div>` : ''}
-      ${open ? `<div class="tbl" style="margin-top:8px"><table><thead><tr><th>Mẫu (Tên phân loại hàng)</th><th class="num">Dòng đơn</th><th>Phân loại riêng</th><th>Thư mục lấy file riêng</th></tr></thead><tbody>${G.items.map(it => {
+      ${open ? `<div class="tbl" style="margin-top:8px"><table><thead><tr><th>Ảnh</th><th>Mẫu (Tên phân loại hàng)</th><th class="num">Dòng đơn</th><th>Phân loại riêng</th><th>Thư mục lấy file riêng</th></tr></thead><tbody>${G.items.map(it => {
         const cur = Core.classify({ product: real, variation: it.k }, c);
-        return `<tr><td><b>${esc(it.k)}</b></td><td class="num">${it.n || ''}</td>
+        const ik = imgKey(it.k), has = hasImg(ik);
+        return `<tr><td>${has ? imgTag(ik, it.k) : S.cfg.khoThumb ? thumbTag(itemRel(it.k, real), it.k) : ''}
+            <label class="link" style="cursor:pointer;font-size:12px;padding:0"><input type="file" accept="image/png,image/jpeg" multiple hidden data-up="${esc(it.k)}">Thêm ảnh</label>${has ? ` <button class="link" data-rmimg="${esc(it.k)}" style="font-size:12px;padding:0 2px">Xóa ảnh</button>` : ''}</td>
+          <td><b>${esc(it.k)}</b></td><td class="num">${it.n || ''}</td>
           <td><select data-pm="${esc(it.k)}" aria-label="Phân loại">${catOpts(c.products[it.k], 'Theo sản phẩm / từ khóa')}</select><div class="note">Lưu vào: ${esc(cur ? cur.name : c.common)}</div></td>
           <td><input data-pf="${esc(it.k)}" value="${esc(c.folders[it.k] || '')}" placeholder="${esc(c.lfolders[real] || 'Tự tìm trong kho')}" size="22" aria-label="Thư mục lấy file"> <button class="link" data-pfp="${esc(it.k)}">Chọn…</button></td></tr>`;
       }).join('')}</tbody></table></div>` : ''}
@@ -1070,7 +1115,180 @@ function renderProducts() {
   document.querySelectorAll('[data-pm]').forEach(s => s.onchange = () => { if (s.value) c.products[s.dataset.pm] = s.value; else delete c.products[s.dataset.pm]; saveCat(); });
   document.querySelectorAll('[data-pf]').forEach(i => i.onchange = async () => { setFolder(i.dataset.pf, toRel(i.value)); await saveCat(); analyze(); });
   document.querySelectorAll('[data-pfp]').forEach(b => b.onclick = () => pickFolder(b.dataset.pfp));
+  document.querySelectorAll('[data-up]').forEach(i => i.onchange = async () => {
+    const k = imgKey(i.dataset.up); let no = nextImgNo(k);
+    for (const f of i.files) { try { await saveImg(imgId(k, no++), f); } catch (err) { alert(`Không đọc được ảnh ${f.name}: ${err.message}`); } }
+    refreshImgs();
+  });
+  document.querySelectorAll('[data-rmimg]').forEach(b => b.onclick = async () => {
+    if (!confirm(`Xóa hết ảnh của ${b.dataset.rmimg}?`)) return;
+    await deleteImgs(imgKey(b.dataset.rmimg)); refreshImgs();
+  });
 }
+/* ---- ảnh xem trước: lấy từ file trong kho, tải dần khi cuộn tới, nhớ lại để không đọc lại ---- */
+const thumbCache = new Map(), thumbQueue = [];
+let thumbBusy = 0;
+const previewRel = o => { const m = o.match; return m ? ((m.files[0] || m.candidates[0] || {}).rel || '') : ''; };
+function itemRel(k, product) {
+  if (!Object.keys(S.index).length && !(S.index.all || []).length) return '';
+  const o = { ...Core.parseVariation({ variation: k }), variation: k, product, size: null, pieces: 1 };
+  const m = Core.matchOrder(o, S.index, folderFor(o));
+  return (m.files[0] || m.candidates[0] || {}).rel || '';
+}
+const thumbTag = (rel, label) => rel
+  ? `<img class="thumb" data-th="${esc(rel)}" alt="Ảnh ${esc(label)}" title="${esc(rel)}">`
+  : '';
+
+/* ---- ảnh tự nhập: lưu ở _dulieu/anh trong thư mục dùng chung; chưa có thư mục chung thì tạm giữ trên máy rồi đẩy lên sau ---- */
+const IMG_DIR = 'anh';
+const imgKey = s => Core.productKey({ variation: String(s || '').normalize('NFC') }).toUpperCase();
+/* mỗi mẫu có thể có nhiều ảnh (tranh bộ): mã ảnh = "<mẫu>~<số thứ tự>" */
+const imgId = (k, i) => `${k}~${i}`;
+const idKey = id => id.slice(0, id.lastIndexOf('~'));
+const idNo = id => +id.slice(id.lastIndexOf('~') + 1);
+const imgFileName = id => encodeURIComponent(id).replace(/\*/g, '%2A') + '.jpg';
+function imgFromName(n) {
+  try {
+    const s = decodeURIComponent(n.replace(/\.(jpe?g|png)$/i, '')), m = s.match(/^(.*)~(\d+)$/), k = imgKey(m ? m[1] : s);
+    return k ? imgId(k, m ? +m[2] : 1) : '';
+  } catch (_) { return ''; }
+}
+/* tên ảnh nhập hàng loạt: "HH01-11.jpg", "HH01-11 (2).jpg", "HH01-11_3.jpg" */
+function parseImgName(name) {
+  const stem = name.replace(/\.[^.]+$/, '').trim(), m = stem.match(/^(.*?)(?:\s*\((\d{1,2})\)|_(\d{1,2}))$/);
+  return { k: imgKey(m ? m[1] : stem), i: m ? +(m[2] || m[3]) : 1 };
+}
+const imgUrls = new Map();
+let imgIndex = new Map();
+function rebuildImgIndex() {
+  imgIndex = new Map();
+  for (const id of new Set([...S.imgRemote.keys(), ...S.imgKeys])) { const k = idKey(id); (imgIndex.get(k) || imgIndex.set(k, []).get(k)).push(id); }
+  for (const ids of imgIndex.values()) ids.sort((a, b) => idNo(a) - idNo(b));
+}
+const imgsOf = k => imgIndex.get(k) || [];
+const hasImg = k => !!k && imgsOf(k).length > 0;
+const imgLookup = o => [Core.productKey(o), codeLabel(o), o.code].map(imgKey).find(hasImg) || '';
+const imgTag = (k, label) => {
+  const ids = imgsOf(k); if (!ids.length) return '';
+  return `<span class="tw"><img class="thumb" data-img="${esc(ids[0])}" data-k="${esc(k)}" alt="Ảnh ${esc(label || k)}" title="${esc(k)}">${ids.length > 1 ? `<i>${ids.length} ảnh</i>` : ''}</span>`;
+};
+const rowThumb = o => { const k = imgLookup(o); return k ? imgTag(k, codeLabel(o)) : S.cfg.khoThumb ? thumbTag(previewRel(o), codeLabel(o)) : ''; };
+async function imgBlob(id) {
+  const h = S.imgRemote.get(id);
+  if (h) try { return await h.getFile(); } catch (_) { }
+  return await kvGet('img:' + id) || null;
+}
+function imgUrl(id) {
+  if (!imgUrls.has(id)) imgUrls.set(id, imgBlob(id).then(b => b ? URL.createObjectURL(b) : null).catch(() => null));
+  return imgUrls.get(id);
+}
+function dropImgUrl(id) { const u = imgUrls.get(id); imgUrls.delete(id); if (u) u.then(x => x && URL.revokeObjectURL(x)); }
+const nextImgNo = k => imgsOf(k).reduce((a, id) => Math.max(a, idNo(id)), 0) + 1;
+async function shrinkImg(file, max = 600) {
+  const b = await createImageBitmap(file), r = Math.min(1, max / Math.max(b.width, b.height));
+  const c = new OffscreenCanvas(Math.max(1, Math.round(b.width * r)), Math.max(1, Math.round(b.height * r)));
+  const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(b, 0, 0, c.width, c.height); b.close();
+  return c.convertToBlob({ type: 'image/jpeg', quality: 0.85 });
+}
+async function imgDir() {
+  if (!S.dst || await S.dst.queryPermission({ mode: 'readwrite' }) !== 'granted') return null;
+  return (await S.dst.getDirectoryHandle('_dulieu', { create: true })).getDirectoryHandle(IMG_DIR, { create: true });
+}
+async function saveImg(id, file) {
+  const blob = await shrinkImg(file), d = await imgDir().catch(() => null);
+  if (d) {
+    await writeParts(d, imgFileName(id), [blob]);
+    S.imgRemote.set(id, await d.getFileHandle(imgFileName(id)));
+    if (S.imgKeys.delete(id)) { await kvSet('img:' + id, null); await kvSet('imgKeys', [...S.imgKeys]); }
+  } else { await kvSet('img:' + id, blob); S.imgKeys.add(id); await kvSet('imgKeys', [...S.imgKeys]); }
+  dropImgUrl(id); rebuildImgIndex();
+}
+async function deleteImgs(k) {
+  const d = await imgDir().catch(() => null);
+  for (const id of imgsOf(k)) {
+    if (d) await d.removeEntry(imgFileName(id)).catch(() => { });
+    S.imgRemote.delete(id);
+    if (S.imgKeys.delete(id)) await kvSet('img:' + id, null);
+    dropImgUrl(id);
+  }
+  await kvSet('imgKeys', [...S.imgKeys]); rebuildImgIndex();
+}
+async function syncImgs(d) {
+  const ad = await d.getDirectoryHandle(IMG_DIR, { create: true }), m = new Map();
+  for await (const [name, h] of ad.entries()) { const id = h.kind === 'file' && imgFromName(name); if (id) m.set(id, h); }
+  for (const id of [...S.imgKeys]) {
+    const b = await kvGet('img:' + id);
+    if (b) { await writeParts(ad, imgFileName(id), [b]); m.set(id, await ad.getFileHandle(imgFileName(id))); }
+    S.imgKeys.delete(id); await kvSet('img:' + id, null);
+  }
+  await kvSet('imgKeys', [...S.imgKeys]);
+  S.imgRemote = m; rebuildImgIndex();
+}
+const refreshImgs = () => { renderProducts(); renderOrders(); renderDesign(); };
+$('imgBulk').addEventListener('change', async e => {
+  const files = [...e.target.files]; e.target.value = '';
+  let n = 0;
+  for (const f of files) {
+    const { k, i } = parseImgName(f.name);
+    if (!k) continue;
+    $('catInfo').textContent = `Đang nhập ảnh ${++n}/${files.length}: ${f.name}`;
+    try { await saveImg(imgId(k, i), f); } catch (err) { n--; console.warn(f.name, err); }
+  }
+  $('catInfo').textContent = `Đã nhập ${n}/${files.length} ảnh` + (S.dst ? '' : ' (tạm lưu trên máy này, chọn thư mục lưu file cần in để các máy khác cùng thấy)') + '.';
+  refreshImgs();
+});
+async function makeThumb(rel, max) {
+  const h = S.handles.get(rel); if (!h) return null;
+  const file = await h.getFile(), ext = rel.split('.').pop().toLowerCase();
+  let canvas;
+  if (ext === 'tif' || ext === 'tiff') {
+    const t = await Core.tiffThumb(file, await Core.tiffInfo(file), max); if (!t) return null;
+    canvas = new OffscreenCanvas(t.w, t.h); canvas.getContext('2d').putImageData(new ImageData(t.data, t.w, t.h), 0, 0);
+  } else if (/^(jpe?g|png|webp)$/.test(ext)) {
+    const b = await createImageBitmap(file), r = Math.min(1, max / Math.max(b.width, b.height));
+    canvas = new OffscreenCanvas(Math.max(1, Math.round(b.width * r)), Math.max(1, Math.round(b.height * r)));
+    canvas.getContext('2d').drawImage(b, 0, 0, canvas.width, canvas.height); b.close();
+  } else return null;
+  return URL.createObjectURL(await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.85 }));
+}
+function getThumb(rel, max = 160) {
+  const key = rel + '|' + max;
+  if (!thumbCache.has(key)) thumbCache.set(key, new Promise(ok => { thumbQueue.push({ rel, max, ok }); pumpThumbs(); }));
+  return thumbCache.get(key);
+}
+function pumpThumbs() {
+  while (thumbBusy < 3 && thumbQueue.length) {
+    const j = thumbQueue.shift(); thumbBusy++;
+    makeThumb(j.rel, j.max).catch(() => null).then(u => { thumbBusy--; j.ok(u); pumpThumbs(); });
+  }
+}
+const thumbObs = new IntersectionObserver(es => es.forEach(e => {
+  if (!e.isIntersecting) return;
+  const img = e.target; thumbObs.unobserve(img);
+  (img.dataset.img ? imgUrl(img.dataset.img) : getThumb(img.dataset.th)).then(u => { if (u) img.src = u; else { img.classList.add('none'); img.title = 'Không xem trước được loại file này'; } });
+}), { rootMargin: '200px' });
+new MutationObserver(() => document.querySelectorAll('img[data-th]:not([data-seen]), img[data-img]:not([data-seen])').forEach(i => { i.dataset.seen = '1'; thumbObs.observe(i); }))
+  .observe(document.body, { childList: true, subtree: true });
+document.addEventListener('click', async e => {
+  const img = e.target.closest && e.target.closest('img[data-th], img[data-img]');
+  if (!img || img.classList.contains('none')) return;
+  if (img.dataset.k) {
+    const ids = imgsOf(img.dataset.k);
+    $('zoomBox').innerHTML = ids.map((_, j) => `<img alt="Ảnh ${j + 1}">`).join('');
+    const els = $('zoomBox').querySelectorAll('img');
+    ids.forEach((id, j) => imgUrl(id).then(u => { if (u) els[j].src = u; }));
+    $('zoomCap').textContent = img.dataset.k + (ids.length > 1 ? ` · ${ids.length} ảnh` : '');
+    $('zoom').showModal(); return;
+  }
+  $('zoomBox').innerHTML = '<img id="zoomImg" alt="">';
+  $('zoomCap').textContent = img.dataset.th + ' (đang tải ảnh to…)'; $('zoomImg').src = img.src || ''; $('zoom').showModal();
+  const u = await getThumb(img.dataset.th, 1000);
+  if (u) $('zoomImg').src = u;
+  $('zoomCap').textContent = img.dataset.th + (/\.tiff?$/i.test(img.dataset.th) ? ' · màu xem trước chỉ gần đúng với file in' : '');
+});
+$('zoomClose').addEventListener('click', () => $('zoom').close());
+$('zoom').addEventListener('click', e => { if (e.target === $('zoom')) $('zoom').close(); });
+
 let prodTimer;
 $('prodQ').addEventListener('input', () => { clearTimeout(prodTimer); prodTimer = setTimeout(renderProducts, 250); });
 $('prodOnly').addEventListener('change', renderProducts);
@@ -1152,6 +1370,7 @@ async function syncShared() {
         if (remoteT > (S.cat.t || 0)) { S.cat = normCat(r); await kvSet('cat', S.cat); analyze(); }
       } catch (_) { }
       if (S.cat.t && S.cat.t > remoteT) await writeParts(d, 'phanloai.json', [JSON.stringify(S.cat)]);
+      try { const before = S.imgRemote.size; await syncImgs(d); if (S.imgRemote.size !== before) renderProducts(); } catch (e) { console.warn(e); }
       for await (const [name, h] of d.entries()) {
         if (name === mine || !/^may-.*\.json$/.test(name)) continue;
         try { files.push(JSON.parse(await (await h.getFile()).text())); } catch (_) { }
@@ -1182,7 +1401,8 @@ function renderDesign() {
   $('twRows').innerHTML = list.map(m => {
     const c = live[m.key], mineC = c && c.machine === S.machine;
     const who = c ? (sh.names[c.machine] && sh.names[c.machine].name) || c.machine : '';
-    return `<tr><td><b>${esc(m.key)}</b></td><td>${esc(m.sizes.join(', '))}</td><td class="num">${m.orders || ''}</td>
+    const ik = imgKey(m.key);
+    return `<tr><td>${hasImg(ik) ? imgTag(ik, m.key) : ''}<b>${esc(m.key)}</b></td><td>${esc(m.sizes.join(', '))}</td><td class="num">${m.orders || ''}</td>
       <td class="num">${c ? c.files : `<input data-tw="${esc(m.key)}" type="number" min="1" value="${m.pieces}" aria-label="Số file" style="width:62px;padding:2px 4px">`}</td>
       <td>${c ? `<span class="tag ok">Đã có file</span><div class="note">${esc(who)} xác nhận ${c.date.split('-').reverse().join('/')}</div>` : '<span class="tag err">Chưa có file</span>'}</td>
       <td>${c ? (mineC ? `<button class="link" data-undo="${esc(m.key)}">Hủy xác nhận</button>` : '') : `<button data-cf="${esc(m.key)}">Xác nhận đã có file</button>`}</td></tr>`;
@@ -1220,7 +1440,7 @@ function renderOrders() {
       <td>${o.size ? Core.sizeKey(o.size.w, o.size.h) : `<input data-size="${o.id}" placeholder="40x60" size="6" style="padding:2px 4px">`}</td>
       <td class="num">${o.qty}</td>
       <td class="num"><input data-pcs="${o.id}" type="number" min="1" value="${o.qty * o.pieces}" aria-label="Tổng tấm" style="width:62px;padding:2px 4px" ${o.status === 'done' ? 'disabled' : ''}></td>
-      <td><span class="path">${file}</span>${sel}${o.warn ? `<div class="warnline">${esc(o.warn)}</div>` : ''}</td>
+      <td>${rowThumb(o)}<span class="path">${file}</span>${sel}${o.warn ? `<div class="warnline">${esc(o.warn)}</div>` : ''}</td>
       <td><span class="tag ${cls}">${label}</span>${m && m.note && o.status !== 'done' ? `<div class="note">${esc(m.note)}</div>` : ''}${o.err ? `<div class="err">${esc(o.err)}</div>` : ''}${o.status === 'missing' && o.code ? (S.shared.live[Core.modelKey(o)] ? '<div class="note"><span class="tag ok">Thiết kế đã xác nhận</span> Bấm Quét lại kho để lấy file</div>' : `<div style="margin-top:4px" class="noprint"><button class="link" data-cfo="${esc(Core.modelKey(o))}" data-n="${Math.round(o.pieces)}">Xác nhận đã có file</button></div>`) : ''}</td>
       <td class="noprint"><button class="link" data-del="${o.id}">Xóa</button></td></tr>`;
   }).join('');
@@ -1242,6 +1462,7 @@ async function copyText(text, btn) {
 $('copyLinks').addEventListener('click', e => copyText(S.orders.filter(o => o.links && o.status === 'done')
   .map(o => `${codeLabel(o)}\t${Core.sizeKey(o.size.w, o.size.h)}\tSL${Math.round(o.qty * o.pieces)}\t${o.links.join('\t')}`).join('\r\n'), e.target));
 $('cfgBase').addEventListener('change', e => { S.cfg.srcBase = e.target.value.trim(); kvSet('cfg', S.cfg); });
+$('cfgKhoThumb').addEventListener('change', e => { S.cfg.khoThumb = e.target.checked; kvSet('cfg', S.cfg); refreshImgs(); });
 $('rescan').addEventListener('click', async () => {
   if (S.src && await ensurePerm(S.src, 'read')) scan(); else $('scanInfo').textContent = 'Hãy chọn thư mục lấy file trước.';
 });
