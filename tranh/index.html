@@ -121,6 +121,7 @@ td select{max-width:320px;padding:3px 5px}
       <label class="f">Số lượng<input id="mQty" type="number" min="1" value="1" style="width:76px"></label>
       <label class="f">Số tấm mỗi bộ<input id="mPcs" type="number" min="1" value="1" style="width:76px"></label>
       <label class="f">Mã đơn (nếu có)<input id="mOrder" size="16"></label>
+      <label class="f">Phân loại<select id="mCat"></select></label>
       <button id="mAdd" class="main">Thêm vào danh sách</button>
       <button id="mDirect">Ghi thống kê, không lấy file</button>
     </div>
@@ -233,6 +234,22 @@ td select{max-width:320px;padding:3px 5px}
 </section>
 
 <section id="tab-cd" hidden>
+  <div class="panel">
+    <h2>Bảng phân loại sản phẩm</h2>
+    <p class="note">Mỗi phân loại là một thư mục cùng tên, nằm trong thư mục lưu file cần in. Sản phẩm không có phân loại được lưu vào thư mục chung.</p>
+    <div class="row end"><label class="f">Thư mục chung cho sản phẩm chưa phân loại<input id="catCommon" size="26"></label></div>
+    <div class="tbl" style="margin-top:10px"><table>
+      <thead><tr><th>Tên phân loại (tên thư mục)</th><th>Từ khóa tự nhận, cách nhau dấu phẩy</th><th></th></tr></thead>
+      <tbody id="catRows"></tbody>
+    </table></div>
+    <div class="row" style="margin-top:8px"><button id="catAdd">Thêm phân loại</button></div>
+    <h2 style="margin-top:18px">Sản phẩm trong đơn</h2>
+    <p class="note">Chọn phân loại cho từng sản phẩm. Để “Theo từ khóa” thì app tự nhận theo từ khóa ở bảng trên, tìm trong tên sản phẩm, tên phân loại hàng và SKU.</p>
+    <div class="tbl" style="max-height:420px;overflow:auto"><table>
+      <thead><tr><th>Sản phẩm</th><th class="num">Số dòng</th><th>Phân loại</th></tr></thead>
+      <tbody id="prodRows"></tbody>
+    </table></div>
+  </div>
   <div class="panel">
     <h2>Máy này</h2>
     <div class="row end">
@@ -361,7 +378,10 @@ const Core = (() => {
       }
     }
     const all = idx[o.code] || [];
-    if (!all.length) return { status: 'missing', files: [], candidates: [], note: 'Không có mã này trong kho' };
+    if (!all.length) {
+      const sim = similar(o, idx);
+      return { status: 'missing', files: [], candidates: sim, note: 'Không có mã này trong kho' + (sim.length ? `. Gần giống nhất: ${sim.map(f => f.rel).join(', ')}` : '') };
+    }
     const raster = all.filter(f => f.usable);
     if (!raster.length) return { status: 'review', files: [], candidates: [], note: 'Chỉ có file CDR/vector, cần xuất ra TIF' };
     let pool = o.variant ? raster.filter(f => f.variant === o.variant) : raster;
@@ -387,13 +407,15 @@ const Core = (() => {
     const c = { id: col('mã đơn hàng'), date: col('ngày đặt hàng'), st: col('trạng thái đơn hàng'), prod: col('tên sản phẩm'),
       var: col('tên phân loại hàng'), skuV: col('sku phân loại hàng'), skuP: col('sku sản phẩm'), qty: col('số lượng') };
     if (c.var < 0 || c.qty < 0) throw new Error('Thiếu cột “Tên phân loại hàng” hoặc “Số lượng”');
-    const out = [], skipped = { cancelled: 0 };
+    const out = [], skipped = {};
+    const norm = s => String(s ?? '').normalize('NFC').trim().toLowerCase();
     for (const r of rows.slice(hIdx + 1)) {
       if (!r || !r[c.id]) continue;
-      if (c.st >= 0 && /đã hủy|hủy/i.test(String(r[c.st] ?? ''))) { skipped.cancelled++; continue; }
+      /* chỉ lấy đơn “Chờ giao hàng”, các trạng thái khác đếm để báo lại */
+      if (c.st >= 0 && norm(r[c.st]) !== 'chờ giao hàng') { const s = String(r[c.st] ?? '').trim() || '(trống)'; skipped[s] = (skipped[s] || 0) + 1; continue; }
       const p = parseVariation({ variation: r[c.var], skuVar: r[c.skuV], skuProd: r[c.skuP], product: r[c.prod] });
       out.push({ orderId: String(r[c.id]), orderDate: String(r[c.date] ?? '').slice(0, 10), variation: String(r[c.var] ?? ''),
-        qty: Math.max(1, parseInt(r[c.qty], 10) || 1), ...p });
+        product: String(r[c.prod] ?? ''), skuProd: String(r[c.skuP] ?? '').trim(), qty: Math.max(1, parseInt(r[c.qty], 10) || 1), ...p });
     }
     return { orders: out, skipped };
   }
@@ -610,6 +632,41 @@ const Core = (() => {
     return [...m.values()];
   }
 
+  /* ---- tên file gần giống: so khoảng cách chữ giữa mã đơn và mã file ---- */
+  function lev(a, b) {
+    let p = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+      const q = [i];
+      for (let j = 1; j <= b.length; j++) q[j] = Math.min(p[j] + 1, q[j - 1] + 1, p[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      p = q;
+    }
+    return p[b.length];
+  }
+  function similar(o, idx, n = 3) {
+    const target = (o.code + (o.variant ? '-' + o.variant : '')).toUpperCase(), out = [];
+    for (const code of Object.keys(idx)) for (const f of idx[code]) {
+      if (!f.usable) continue;
+      const k = (f.code + (f.variant ? '-' + f.variant : '')).toUpperCase();
+      out.push({ f, d: Math.min(lev(target, k), lev(o.code.toUpperCase(), f.code.toUpperCase()) + (f.variant === o.variant ? 0 : 1)) });
+    }
+    const lim = Math.max(2, Math.floor(target.length / 3));
+    return out.filter(x => x.d <= lim)
+      .sort((a, b) => a.d - b.d || (+!!sameSize(b.f.size, o.size)) - (+!!sameSize(a.f.size, o.size)))
+      .slice(0, n).map(x => x.f);
+  }
+
+  /* ---- phân loại sản phẩm: chọn tay theo sản phẩm > từ khóa > thư mục chung ---- */
+  const productKey = o => String(o.skuProd || o.product || '').trim();
+  function classify(o, cat) {
+    const list = cat.list || [], byId = id => list.find(c => c.id === id);
+    if (o.catId && byId(o.catId)) return byId(o.catId);
+    const pick = (cat.products || {})[productKey(o)];
+    if (pick === 'none') return null;
+    if (pick && byId(pick)) return byId(pick);
+    const text = `${o.product || ''} ${o.variation || ''} ${o.skuProd || ''}`.toLowerCase();
+    return list.find(c => String(c.kw || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean).some(k => text.includes(k))) || null;
+  }
+
   /* ---- thiết kế: gộp dữ liệu của từng máy ---- */
   const modelKey = o => o.code + (o.variant ? '-' + o.variant : '');
   function mergeShared(files) {
@@ -644,7 +701,7 @@ const Core = (() => {
     return { rows: Object.values(per).sort((a, b) => b.period.localeCompare(a.period) || b.files - a.files), machines: Object.values(machines) };
   }
 
-  return { modelKey, mergeShared, designSummary, parseVariation, parseSizeText, parseCodeText, parseFilePath, buildIndex, matchOrder, parseRows, sameSize, ratio, sizeKey,
+  return { similar, productKey, classify, modelKey, mergeShared, designSummary, parseVariation, parseSizeText, parseCodeText, parseFilePath, buildIndex, matchOrder, parseRows, sameSize, ratio, sizeKey,
     tiffInfo, tiffResizeParts, cropRect, tiffCrop, jpegResizeParts, pngResizeParts, physChunk,
     areaM2, frameM, periodKey, summarize, mergeRecords, round };
 })();
@@ -656,7 +713,8 @@ if (typeof module !== 'undefined') module.exports = Core;
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const S = { src: null, dst: null, index: {}, handles: new Map(), orders: [], records: [], filter: 'all', cfg: { minDpi: 100, maxCrop: 25 },
-  machine: '', mine: { label: '', missing: [], confirms: [], names: {} }, shared: Core.mergeShared([]) };
+  machine: '', mine: { label: '', missing: [], confirms: [], names: {} }, shared: Core.mergeShared([]),
+  cat: { t: 0, list: [], common: 'Chưa phân loại', products: {} } };
 const PW = { salt: 'newhouse-layfilein-v1', hash: 'b77ea80da681b3c9d1f0366943dfae579bbdb2ecc63b718b9cdb688644ded6c6' };
 const PW_TK = { salt: 'newhouse-thongke-v1', hash: '96d2155416b804c83c50f374207f3d90c4502fe7c4f193b544d76b2ef5f976ba' };
 const STATS_FILE = 'thongke-in.json';
@@ -698,6 +756,8 @@ async function enter() {
     await kvSet('machineId', S.machine);
   }
   S.mine = { ...S.mine, ...(await kvGet('mine') || {}) };
+  S.cat = { ...S.cat, ...(await kvGet('cat') || {}) };
+  renderCat();
   $('cfgId').value = S.machine; $('cfgLabel').value = S.mine.label;
   $('minDpi').value = S.cfg.minDpi; $('maxCrop').value = S.cfg.maxCrop;
   const s = await kvGet('srcDir'), d = await kvGet('dstDir');
@@ -772,12 +832,13 @@ $('pickDst').addEventListener('click', async () => {
 /* ---- nhập đơn ---- */
 const lineKey = o => `${o.orderId}|${o.code}|${o.variant || ''}|${o.size ? Core.sizeKey(o.size.w, o.size.h) : ''}`;
 function addOrders(list) {
-  const have = new Set(S.orders.map(o => o.key));
+  const have = new Map(S.orders.map(o => [o.key, o]));
   let added = 0;
   for (const o of list) {
     o.key = lineKey(o);
-    if (o.orderId && have.has(o.key)) continue;
-    have.add(o.key);
+    const old = o.orderId && have.get(o.key);
+    if (old) { if ('retake' in o) { old.retake = o.retake; added++; } continue; }
+    have.set(o.key, o);
     o.id = crypto.randomUUID ? crypto.randomUUID() : String(Math.random());
     S.orders.push(o); added++;
   }
@@ -792,10 +853,17 @@ async function loadExcel(file) {
       try { res = Core.parseRows(XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: '', raw: false })); break; } catch (e) { err = e; }
     }
     if (!res) throw err;
+    const dups = [...new Set(res.orders.map(o => o.orderId).filter(id => takenIds().has(id)))];
+    const retake = dups.length ? askRetake(dups) : false;
+    for (const o of res.orders) if (dups.includes(o.orderId)) o.retake = retake;
     const added = addOrders(res.orders);
-    $('xlsxInfo').textContent = `${file.name}: ${res.orders.length} dòng, thêm mới ${added}, bỏ qua ${res.skipped.cancelled} dòng đã hủy.`;
+    const sk = Object.entries(res.skipped).map(([s, n]) => `${n} “${s}”`).join(', ');
+    $('xlsxInfo').textContent = `${file.name}: lấy ${res.orders.length} dòng Chờ giao hàng, thêm mới ${added}` +
+      (sk ? `; bỏ qua ${sk}` : '') + (dups.length ? `; ${dups.length} mã đơn đã lấy trước đó (${retake ? 'sẽ lấy lại' : 'không lấy lại'})` : '') + '.';
   } catch (e) { $('xlsxInfo').textContent = 'Không đọc được file: ' + e.message; }
 }
+const takenIds = () => new Set(S.records.filter(r => !r.del && r.orderId).map(r => r.orderId));
+const askRetake = ids => confirm(`CẢNH BÁO: ${ids.length} mã đơn đã lấy file trước đó:\n\n${ids.slice(0, 15).join('\n')}${ids.length > 15 ? `\n… và ${ids.length - 15} đơn khác` : ''}\n\nBấm OK để lấy file lại, bấm Hủy để bỏ qua các đơn này.`);
 $('xlsx').addEventListener('change', e => { if (e.target.files[0]) loadExcel(e.target.files[0]); e.target.value = ''; });
 for (const ev of ['dragover', 'dragleave', 'drop']) $('drop').addEventListener(ev, e => {
   e.preventDefault(); $('drop').classList.toggle('on', ev === 'dragover');
@@ -807,11 +875,16 @@ function readManual() {
   const c = Core.parseCodeText($('mCode').value), size = Core.parseSizeText($('mSize').value);
   if (!c) { $('mErr').textContent = 'Mã tranh chưa đúng, ví dụ NN268-1.'; return null; }
   if (!size) { $('mErr').textContent = 'Kích thước chưa đúng, ví dụ 40x40.'; return null; }
-  return { orderId: $('mOrder').value.trim() || 'Nhập tay', orderDate: today(), variation: 'Nhập tay', code: c.code, variant: c.variant, size,
+  return { orderId: $('mOrder').value.trim() || 'Nhập tay', orderDate: today(), variation: 'Nhập tay', catId: $('mCat').value, code: c.code, variant: c.variant, size,
     qty: Math.max(1, +$('mQty').value || 1), pieces: Math.max(1, +$('mPcs').value || 1), manual: true };
 }
 const clearManual = () => { $('mCode').value = $('mOrder').value = ''; $('mCode').focus(); };
-$('mAdd').addEventListener('click', () => { const o = readManual(); if (!o) return; o.orderId += o.orderId === 'Nhập tay' ? ' ' + Date.now() : ''; addOrders([o]); clearManual(); });
+$('mAdd').addEventListener('click', () => {
+  const o = readManual(); if (!o) return;
+  if (o.orderId === 'Nhập tay') o.orderId += ' ' + Date.now();
+  else if (takenIds().has(o.orderId)) o.retake = askRetake([o.orderId]);
+  addOrders([o]); clearManual();
+});
 $('mDirect').addEventListener('click', async () => {
   const o = readManual(); if (!o) return;
   await record(o, 'Nhập tay'); clearManual(); renderStats();
@@ -824,7 +897,8 @@ function analyze() {
   const ready = Object.keys(S.index).length > 0;
   const done = new Set(S.records.filter(r => !r.del).map(r => r.orderKey));
   for (const o of S.orders) {
-    if (done.has(o.key)) { o.status = 'done'; continue; }
+    if (o.retake === false) { o.status = 'taken'; continue; }
+    if (done.has(o.key) && !o.retake) { o.status = 'done'; continue; }
     if (o.chosen && o.size && S.handles.has(o.chosen)) {
       const f = Core.parseFilePath(o.chosen) || { rel: o.chosen, size: null };
       o.match = { status: Core.sameSize(f.size, o.size) ? 'ok' : 'resize', files: [f], candidates: o.match ? o.match.candidates : [], note: 'Bạn đã chọn file' };
@@ -843,8 +917,41 @@ function analyze() {
     S.mine.missing = Object.values(miss);
     syncShared();
   }
-  renderOrders();
+  renderOrders(); renderCat();
 }
+
+/* ---- bảng phân loại ---- */
+const catFolder = o => safe((Core.classify(o, S.cat) || {}).name || S.cat.common || 'Chưa phân loại');
+async function saveCat() { S.cat.t = Date.now(); await kvSet('cat', S.cat); renderCat(); renderOrders(); syncShared(); }
+function renderCat() {
+  const c = S.cat;
+  $('catCommon').value = c.common;
+  $('catRows').innerHTML = c.list.map(x => `<tr><td><input data-cn="${x.id}" value="${esc(x.name)}" size="20" aria-label="Tên phân loại"></td>
+    <td><input data-ck="${x.id}" value="${esc(x.kw)}" size="34" placeholder="decal, đồng hồ" aria-label="Từ khóa"></td>
+    <td><button class="link" data-cx="${x.id}">Xóa</button></td></tr>`).join('') || '<tr><td colspan="3" class="note">Chưa có phân loại nào, mọi sản phẩm vào thư mục chung.</td></tr>';
+  const opts = sel => `<option value="" ${!sel ? 'selected' : ''}>Theo từ khóa</option><option value="none" ${sel === 'none' ? 'selected' : ''}>Chưa phân loại (thư mục chung)</option>` +
+    c.list.map(x => `<option value="${x.id}" ${sel === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
+  const prods = {};
+  for (const o of S.orders) { const k = Core.productKey(o); if (k) (prods[k] = prods[k] || { k, o, n: 0 }).n++; }
+  $('prodRows').innerHTML = Object.values(prods).map(p => {
+    const now = Core.classify({ ...p.o, catId: '' }, c);
+    return `<tr><td>${esc((p.o.product || p.k).slice(0, 95))}${p.o.skuProd ? ` <span class="note">SKU ${esc(p.o.skuProd)}</span>` : ''}</td><td class="num">${p.n}</td>
+      <td><select data-pm="${esc(p.k)}" aria-label="Phân loại">${opts(c.products[p.k])}</select><div class="note">Lưu vào: ${esc(now ? now.name : c.common)}</div></td></tr>`;
+  }).join('') || '<tr><td colspan="3" class="note">Nạp file đơn để thấy danh sách sản phẩm.</td></tr>';
+  const keep = $('mCat').value;
+  $('mCat').innerHTML = '<option value="">Chưa phân loại</option>' + c.list.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('');
+  $('mCat').value = c.list.some(x => x.id === keep) ? keep : '';
+  const find = id => c.list.find(x => x.id === id);
+  document.querySelectorAll('[data-cn]').forEach(i => i.onchange = () => { find(i.dataset.cn).name = i.value.trim() || 'Phân loại'; saveCat(); });
+  document.querySelectorAll('[data-ck]').forEach(i => i.onchange = () => { find(i.dataset.ck).kw = i.value; saveCat(); });
+  document.querySelectorAll('[data-cx]').forEach(b => b.onclick = () => {
+    if (!confirm(`Xóa phân loại “${find(b.dataset.cx).name}”? Sản phẩm của phân loại này sẽ vào thư mục chung.`)) return;
+    c.list = c.list.filter(x => x.id !== b.dataset.cx); saveCat();
+  });
+  document.querySelectorAll('[data-pm]').forEach(s => s.onchange = () => { if (s.value) c.products[s.dataset.pm] = s.value; else delete c.products[s.dataset.pm]; saveCat(); });
+}
+$('catAdd').addEventListener('click', () => { S.cat.list.push({ id: 'c' + Date.now().toString(36), name: 'Phân loại mới', kw: '' }); saveCat(); });
+$('catCommon').addEventListener('change', e => { S.cat.common = e.target.value.trim() || 'Chưa phân loại'; saveCat(); });
 
 /* ---- thiết kế: mỗi máy chỉ ghi file của mình trong _dulieu, nên các máy không đè dữ liệu của nhau ---- */
 const myFile = () => ({ id: S.machine, label: S.mine.label, t: Date.now(), missing: S.mine.missing, confirms: S.mine.confirms, names: S.mine.names });
@@ -856,6 +963,14 @@ async function syncShared() {
     if (S.dst && await S.dst.queryPermission({ mode: 'readwrite' }) === 'granted') {
       const d = await S.dst.getDirectoryHandle('_dulieu', { create: true }), mine = `may-${S.machine}.json`;
       await writeParts(d, mine, [JSON.stringify(myFile())]);
+      /* bảng phân loại dùng chung: bản nào sửa sau cùng thì thắng */
+      let remoteT = -1;
+      try {
+        const r = JSON.parse(await (await (await d.getFileHandle('phanloai.json')).getFile()).text());
+        remoteT = r.t || 0;
+        if (remoteT > (S.cat.t || 0)) { S.cat = { ...S.cat, ...r }; await kvSet('cat', S.cat); renderCat(); }
+      } catch (_) { }
+      if (S.cat.t && S.cat.t > remoteT) await writeParts(d, 'phanloai.json', [JSON.stringify(S.cat)]);
       for await (const [name, h] of d.entries()) {
         if (name === mine || !/^may-.*\.json$/.test(name)) continue;
         try { files.push(JSON.parse(await (await h.getFile()).text())); } catch (_) { }
@@ -900,9 +1015,10 @@ function renderDesign() {
     <td><input data-nm="${esc(m.id)}" value="${esc(sh.names[m.id] ? sh.names[m.id].name : '')}" placeholder="Nhập tên" size="16" aria-label="Người thiết kế của ${esc(m.id)}"></td></tr>`).join('');
   document.querySelectorAll('[data-nm]').forEach(i => i.onchange = () => { S.mine.names[i.dataset.nm] = { name: i.value.trim(), t: Date.now() }; i.blur(); syncShared(); });
 }
-const TAGS = { done: ['ok', 'Đã lấy file'], ok: ['ok', 'Có sẵn đúng cỡ'], resize: ['warn', 'Sẽ chỉnh kích thước'], review: ['warn', 'Cần xem lại'], missing: ['err', 'Không tìm thấy file'], wait: ['mut', 'Chờ chọn thư mục'], fail: ['err', 'Lỗi khi lấy file'] };
+const TAGS = { taken: ['mut', 'Đã lấy lần trước, bỏ qua'], done: ['ok', 'Đã lấy file'], ok: ['ok', 'Có sẵn đúng cỡ'], resize: ['warn', 'Sẽ chỉnh kích thước'], review: ['warn', 'Cần xem lại'], missing: ['err', 'Không tìm thấy file'], wait: ['mut', 'Chờ chọn thư mục'], fail: ['err', 'Lỗi khi lấy file'] };
 const FILTERS = [['all', 'Tất cả', ''], ['done', 'Đã lấy file', 'ok'], ['ready', 'Sẵn sàng lấy', 'ok'], ['review', 'Cần xem lại', 'warn'], ['missing', 'Không tìm thấy', 'err']];
-const inFilter = (o, f) => f === 'all' || (f === 'ready' ? ['ok', 'resize'].includes(o.status) : f === 'missing' ? ['missing', 'fail'].includes(o.status) : o.status === f);
+const inFilter = (o, f) => f === 'all' || (f === 'ready' ? ['ok', 'resize'].includes(o.status) : f === 'missing' ? ['missing', 'fail'].includes(o.status)
+  : f === 'done' ? ['done', 'taken'].includes(o.status) : o.status === f);
 function renderOrders() {
   $('cards').innerHTML = FILTERS.map(([k, label, cls]) =>
     `<button class="card ${cls}" data-f="${k}" aria-pressed="${S.filter === k}"><b>${S.orders.filter(o => inFilter(o, k)).length}</b><small>${label}</small></button>`).join('');
@@ -911,12 +1027,12 @@ function renderOrders() {
   $('emptyRows').hidden = S.orders.length > 0;
   $('rows').innerHTML = list.map(o => {
     const [cls, label] = TAGS[o.status] || TAGS.wait, m = o.match;
-    const sel = m && ['review', 'resize', 'ok'].includes(o.status) && m.candidates.length > 1
-      ? `<select data-pick="${o.id}" aria-label="Chọn file"><option value="">${m.files[0] ? 'Đổi file…' : 'Chọn file…'}</option>${m.candidates.map(c => `<option value="${esc(c.rel)}">${esc(c.rel)}</option>`).join('')}</select>` : '';
+    const sel = m && (['review', 'resize', 'ok'].includes(o.status) && m.candidates.length > 1 || o.status === 'missing' && m.candidates.length && o.size)
+      ? `<select data-pick="${o.id}" aria-label="Chọn file"><option value="">${m.files[0] ? 'Đổi file…' : o.status === 'missing' ? 'Dùng file gần giống…' : 'Chọn file…'}</option>${m.candidates.map(c => `<option value="${esc(c.rel)}">${esc(c.rel)}</option>`).join('')}</select>` : '';
     const file = o.status === 'done' ? esc(o.outName || '') : m && m.files.length ? m.files.map(f => esc(f.rel)).join('<br>') : '';
     return `<tr>
       <td>${esc(o.orderDate)}</td><td>${esc(o.manual ? 'Nhập tay' : o.orderId)}</td>
-      <td>${o.code ? `<b>${esc(codeLabel(o))}</b>` : `<input data-code="${o.id}" placeholder="Nhập mã" size="9" style="padding:2px 4px">`}${o.gift ? ' <span class="tag mut">tặng</span>' : ''}<div class="note">${esc(o.variation)}</div></td>
+      <td>${o.code ? `<b>${esc(codeLabel(o))}</b>` : `<input data-code="${o.id}" placeholder="Nhập mã" size="9" style="padding:2px 4px">`}${o.gift ? ' <span class="tag mut">tặng</span>' : ''}<div class="note">${esc(o.variation)}</div><div class="note">Thư mục: ${esc(catFolder(o))}</div></td>
       <td>${o.size ? Core.sizeKey(o.size.w, o.size.h) : `<input data-size="${o.id}" placeholder="40x60" size="6" style="padding:2px 4px">`}</td>
       <td class="num">${o.qty}</td>
       <td class="num"><input data-pcs="${o.id}" type="number" min="1" value="${o.qty * o.pieces}" aria-label="Tổng tấm" style="width:62px;padding:2px 4px" ${o.status === 'done' ? 'disabled' : ''}></td>
@@ -1034,7 +1150,7 @@ $('run').addEventListener('click', async () => {
     $('progBar').style.width = (i / todo.length * 100) + '%';
     try {
       const sizeName = Core.sizeKey(o.size.w, o.size.h), order = o.manual ? 'tay' : o.orderId;
-      const dayDir = await subDir(S.dst, day, sizeName);
+      const dayDir = await subDir(S.dst, catFolder(o), day, sizeName);
       const total = Math.round(o.qty * o.pieces), files = o.match.files, warn = [];
       /* tranh bộ: chép cả thư mục vào một thư mục con, giữ tên file gốc */
       const setName = o.match.folder ? safe(`${codeLabel(o)}_${sizeName}_SL${o.qty}_${order}`) : '';
@@ -1055,7 +1171,7 @@ $('run').addEventListener('click', async () => {
       }
       o.outName = setName ? `${setName}\\ (${names.length} file)` : names.join(', '); o.warn = [...new Set(warn)].join('. '); o.err = '';
       await record(o, 'Lấy file', o.outName);
-      o.status = 'done';
+      o.status = 'done'; delete o.retake;
     } catch (e) { o.status = 'fail'; o.err = e.message; }
     renderOrders();
   }
