@@ -141,6 +141,8 @@ button:disabled{opacity:.5;cursor:not-allowed}
     <div class="note" id="copiesNote"></div>
     <label class="chk"><input type="checkbox" id="fill"> Lấp đầy khổ (lặp lại các file)</label>
     <label class="chk"><input type="checkbox" id="group" checked> Xếp mỗi lượt thành 1 cụm (dễ nhặt, gói hàng)</label>
+    <label>Khoảng cách giữa 2 bộ (mm)<input type="number" id="setGap" value="0" min="0" max="200" step="1"></label>
+    <div class="note">Khoảng trống giữa 2 cụm (2 lượt) cạnh nhau, đo giữa 2 đường cắt. Nhỏ hơn khoảng cách giữa 2 đường cắt (kể cả 0) thì dùng khoảng cách đó. Chỉ có tác dụng khi bật xếp mỗi lượt thành 1 cụm.</div>
     <label class="chk"><input type="checkbox" id="rot" checked> Cho phép xoay hình</label>
     <label>Thời gian tìm cách xếp (giây)<input type="number" id="optSec" value="4" min="0" max="60" step="1"></label>
     <div class="note">Xếp kín chiều dọc trước (theo cột từ trên xuống), hết cột mới sang ngang.</div>
@@ -560,7 +562,7 @@ function params() {
   const om = Math.max(0, n('offMm'));
   const p = {
     off: mode === 'out' ? om : mode === 'in' ? -om : 0, tol: Math.max(0.02, n('tol')), shape: $('shape').value, join: Math.max(0, n('join')), srcDpi: n('srcDpi') || 300, forceW: n('forceW'),
-    maxW: n('maxW') * 10, maxH: n('maxH') * 10, gap: Math.max(0, n('gap')), margin: Math.max(0, n('margin')),
+    maxW: n('maxW') * 10, maxH: n('maxH') * 10, gap: Math.max(0, n('gap')), setGap: Math.max(0, n('setGap')), margin: Math.max(0, n('margin')),
     copies: Math.max(1, Math.round(n('copies'))), fill: $('fill').checked, group: $('group').checked, rot: $('rot').checked, optSec: n('optSec'),
     origin: $('origin').value, swap: $('swap').checked, mark: $('mark').checked, overcut: Math.max(0, n('overcut')),
     markSeg: Math.max(100, n('markSeg') * 10), markLen: Math.max(3, n('markLen')), markTh: Math.max(0.1, n('markTh')),
@@ -895,7 +897,7 @@ async function planGroups(G, p, Hc, Wc) {
     const sh = r.sheets[0];
     if (sh.wid > Wc) continue;
     // ước lượng khi chồng các cụm thẳng hàng: số cụm mỗi cột theo khổ dọc → chiều dài tờ (hoặc số hình nếu lấp đầy)
-    const per = Math.floor(Hc / sh.hgt), est = p.fill ? -per * Math.floor(Wc / sh.wid) : Math.ceil((sets || 1) / per) * sh.wid;
+    const d = 2 * setPad(G, p), per = Math.floor((Hc + d) / (sh.hgt + d)), est = p.fill ? -per * Math.floor((Wc + d) / (sh.wid + d)) : Math.ceil((sets || 1) / per) * (sh.wid + d);
     if (per && !ones.some(o => o.sh.wid === sh.wid && o.sh.hgt === sh.hgt)) ones.push({ est, a: sh.wid * sh.hgt, sh });
   }
   if (!ones.length) return null;
@@ -907,27 +909,38 @@ async function planGroups(G, p, Hc, Wc) {
   cands.sort(planOrder(p));
   return cands[0];
 }
+// khoảng cách giữa 2 bộ dôi ra so với khoảng cách thường, tính bằng ô lưới, mỗi khối gánh một nửa
+const setPad = (G, p) => p.setGap > p.gap ? (p.setGap - p.gap) / 2 / G.pres + 0.5 : 0; // +0.5 ô bù làm tròn lưới, để không hụt
 async function groupPlans(G, p, Hc, Wc, one, sets, budget) {
-  // 2) khối ghép: hợp các ảnh bit chiếm chỗ của từng hình trong lượt
-  const CW = one.wid, CH = one.hgt, bits = new Uint8Array(CW * CH);
+  // 2) khối ghép: hợp các ảnh bit chiếm chỗ của từng hình trong lượt, đệm d ô mỗi phía để nới khoảng cách giữa 2 bộ
+  const ext = setPad(G, p), d = Math.ceil(ext), CW = one.wid + 2 * d, CH = one.hgt + 2 * d, bits = new Uint8Array(CW * CH);
   for (const it of one.items) {
     const P = rotBits(S.files[it.u].occ, S.files[it.u].gwc, S.files[it.u].ghc, it.k);
-    for (let y = 0; y < P.h; y++) for (let x = 0; x < P.w; x++) if (P.b[y * P.w + x] && it.x + x < CW && it.y + y < CH) bits[(it.y + y) * CW + it.x + x] = 1;
+    for (let y = 0; y < P.h; y++) for (let x = 0; x < P.w; x++) if (P.b[y * P.w + x] && it.x + x < one.wid && it.y + y < one.hgt) bits[(it.y + y + d) * CW + it.x + x + d] = 1;
   }
-  const blk = { prof: (p.rot ? [0, 1, 2, 3] : [0]).map(k => profBits(bits, CW, CH, k)).filter(P => P.w <= Wc && P.h <= Hc), qty: sets || 1, w: CW, h: CH };
+  if (d) {
+    const D = new Float64Array(CW * CH);
+    for (let k = 0; k < D.length; k++) D[k] = bits[k] ? 0 : 1e20;
+    edt(D, CW, CH);
+    const lim = (ext + 0.5) ** 2;
+    for (let k = 0; k < D.length; k++) bits[k] = D[k] <= lim ? 1 : 0;
+  }
+  // khung tờ cũng nới d ô mỗi phía: phần đệm của khối nằm sát mép được phép ra ngoài tờ, cụm sát mép vẫn sát mép
+  const Hp = Hc + 2 * d, Wp = Wc + 2 * d;
+  const blk = { prof: (p.rot ? [0, 1, 2, 3] : [0]).map(k => profBits(bits, CW, CH, k)).filter(P => P.w <= Wp && P.h <= Hp), qty: sets || 1, w: CW, h: CH };
   if (!blk.prof.length) return null;
   // 3) đặt các khối lên tờ
-  const r = await greedyCore([blk], Hc, Wc, p.fill, budget, (v, n) => progress(v, 'Đang xếp các lượt… đã thử ' + n + ' cách'));
+  const r = await greedyCore([blk], Hp, Wp, p.fill, budget, (v, n) => progress(v, 'Đang xếp các lượt… đã thử ' + n + ' cách'));
   // 4) tách khối thành từng hình: xoay ô của từng hình theo hướng khối (cùng quy ước với rotBits)
   const expand = s => s.flatMap((bk, grp) => one.items.map(it => {
-    const f = S.files[it.u], cw = it.k % 2 ? f.ghc : f.gwc, ch = it.k % 2 ? f.gwc : f.ghc, K = bk.k;
-    const [x, y] = K === 0 ? [it.x, it.y] : K === 1 ? [CH - (it.y + ch), it.x] : K === 2 ? [CW - (it.x + cw), CH - (it.y + ch)] : [it.y, CW - (it.x + cw)];
-    return { fi: it.u, k: (it.k + K) % 4, bx: (bk.x + x) * G.pres, by: (bk.y + y) * G.pres, grp };
+    const f = S.files[it.u], cw = it.k % 2 ? f.ghc : f.gwc, ch = it.k % 2 ? f.gwc : f.ghc, K = bk.k, ix = it.x + d, iy = it.y + d;
+    const [x, y] = K === 0 ? [ix, iy] : K === 1 ? [CH - (iy + ch), ix] : K === 2 ? [CW - (ix + cw), CH - (iy + ch)] : [iy, CW - (ix + cw)];
+    return { fi: it.u, k: (it.k + K) % 4, bx: (bk.x + x - d) * G.pres, by: (bk.y + y - d) * G.pres, grp };
   }));
   const mk = list => ({ sheets: list.map(s => fin(G, p, expand(s))), cap: list[0].length * one.items.length, grouped: true });
   const cands = [mk(r.sheets.map(s => s.items))];
   // 5) phân tích thêm mọi kiểu lưới của khối
-  const L = await latticeSearch(bits, CW, CH, p.rot ? [0, 1, 2, 3] : [0], sets, p.fill, Hc, Wc);
+  const L = await latticeSearch(bits, CW, CH, p.rot ? [0, 1, 2, 3] : [0], sets, p.fill, Hp, Wp);
   if (L) cands.push(mk(L.sheets));
   return cands;
 }
@@ -1491,10 +1504,12 @@ function ifd(off, entries) {
   return new Uint8Array(buf);
 }
 // đặt font cho tên file: chữ hoa cao LABEL_H mm, thu nhỏ nếu dài hơn 90% bề ngang tờ; trả về cỡ chữ (px)
+// chữ in dưới tờ: tên file, khi xuất thì thêm mã file bế để ghép tờ in với file cắt
+const labelOf = sh => sh.name + (sh.cutName ? ' - file bế mã ' + sh.cutName : '');
 function labelFont(ctx, sh, s) {
   let fpx = LABEL_H / 0.72 * s;
   ctx.font = 'bold ' + fpx + 'px Arial, sans-serif';
-  const w = ctx.measureText(sh.name).width, lim = sh.W * s * 0.9;
+  const w = ctx.measureText(labelOf(sh)).width, lim = sh.W * s * 0.9;
   if (w > lim) { fpx *= lim / w; ctx.font = 'bold ' + fpx + 'px Arial, sans-serif'; }
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#000';
   return fpx;
@@ -1613,9 +1628,9 @@ async function buildTIF(sh, p, onp) {
       const Rd = p.dotD / 2 * s;
       if (dy * s + Rd > y0 && dy * s - Rd < y0 + rows) { kx.beginPath(); kx.arc(dx * s, dy * s - top, Rd, 0, 2 * Math.PI); kx.fill(); marked = true; }
     }
-    if (sh.labelY && sh.name) { // tên file ở giữa, dưới cùng tờ
+    if (sh.labelY && sh.name) { // tên file (+ mã file bế) ở giữa, dưới cùng tờ
       const fpx = labelFont(kx, sh, s), cy = sh.labelY * s;
-      if (cy + fpx > y0 && cy - fpx < y0 + rows) { kx.fillText(sh.name, W / 2, cy - top); marked = true; }
+      if (cy + fpx > y0 && cy - fpx < y0 + rows) { kx.fillText(labelOf(sh), W / 2, cy - top); marked = true; }
     }
     const kd = marked ? kx.getImageData(0, 0, W, EH).data : null;
     const out = new Uint8Array(W * rows * spp), aO = 4, sO = p.alpha ? 5 : 4;
@@ -1716,7 +1731,7 @@ function draw() {
   for (const [a, b, c, d] of sh.marks) ctx.fillRect(a, b, Math.max(c - a, 1.5 / k), Math.max(d - b, 1.5 / k));
   for (const [dx, dy] of sh.dots) { ctx.beginPath(); ctx.arc(dx, dy, Math.max(p.dotD / 2, 2 / k), 0, 7); ctx.fill(); }
   if (sh.tri) { ctx.beginPath(); sh.tri.forEach(([tx, ty], i) => i ? ctx.lineTo(tx, ty) : ctx.moveTo(tx, ty)); ctx.closePath(); ctx.fill(); }
-  if (sh.labelY && sh.name) { ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); labelFont(ctx, sh, k); ctx.fillText(sh.name, sh.W * k / 2, sh.labelY * k); ctx.restore(); }
+  if (sh.labelY && sh.name) { ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); labelFont(ctx, sh, k); ctx.fillText(labelOf(sh), sh.W * k / 2, sh.labelY * k); ctx.restore(); }
   ctx.beginPath(); ctx.arc(ox, oy, 6 / k, 0, 7); ctx.fillStyle = '#e0157a'; ctx.fill();
 }
 function renderStats() {
@@ -1901,6 +1916,7 @@ $('btnExport').onclick = async () => {
     const hbc = p.machine === 'hbc' && p.mark, cuts = await cutNames(n, hbc ? 'plt' : 'dxf');
     for (let i = 0; i < n; i++) {
       const sh = S.plan.sheets[i], base = S.folder + (n > 1 ? '_' + (i + 1) : '');
+      sh.cutName = cuts[i];
       const t = await buildTIF(sh, p, v => progress((i + v) / n, 'Đang tạo ' + base + '.tif… ' + Math.round(v * 100) + '%'));
       // file cắt: máy HBC = PLT đúng định dạng plugin (cần dấu định vị chuẩn plugin trên TIF); máy Tranh = DXF theo gốc chấm định vị
       outs.push({ name: base + '.tif', parts: t.parts }, hbc ? { name: cuts[i] + '.plt', parts: [enc.encode(buildHBC(sh, p).text)] } : { name: cuts[i] + '.dxf', parts: [enc.encode(buildDXF(sh, p, p.machine === 'hbc').text)] });
