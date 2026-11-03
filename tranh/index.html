@@ -111,6 +111,7 @@ td select{max-width:320px;padding:3px 5px}
   <h1>Lấy file <span>in tranh</span></h1>
   <nav role="tablist">
     <button role="tab" data-tab="don" aria-selected="true">Đơn hàng</button>
+    <button role="tab" data-tab="dl" aria-selected="false">Đơn lẻ <span class="tag err" id="dlBadge" hidden></span></button>
     <button role="tab" data-tab="sx" aria-selected="false">Sản xuất</button>
     <button role="tab" data-tab="tw" aria-selected="false">Chờ thiết kế</button>
     <button role="tab" data-tab="tk" aria-selected="false">Thống kê</button>
@@ -174,6 +175,59 @@ td select{max-width:320px;padding:3px 5px}
       </table>
     </div>
     <p class="note" id="emptyRows">Chưa có đơn nào.</p>
+  </div>
+</section>
+
+<section id="tab-dl" hidden>
+  <div class="panel">
+    <h2>Lên đơn lẻ (ngoài Shopee)</h2>
+    <div class="row end">
+      <label class="f">Người lên đơn *<input id="dlBy" size="14"></label>
+      <label class="f">Tên khách<input id="dlName" size="16"></label>
+      <label class="f">Số điện thoại *<input id="dlPhone" type="tel" inputmode="tel" size="13"></label>
+      <label class="f grow">Địa chỉ *<input id="dlAddr" style="width:100%"></label>
+    </div>
+    <div class="row end" style="margin-top:8px">
+      <label class="f">Kích thước (cm) *<input id="dlSize" placeholder="40x60" size="8"></label>
+      <label class="f">Số lượng<input id="dlQty" type="number" min="1" value="1" style="width:70px"></label>
+      <label class="f">Tổng tiền (đ)<input id="dlPrice" inputmode="numeric" placeholder="350.000" size="12"></label>
+      <label class="f">Phân loại<select id="dlCat"></select></label>
+      <label class="f grow">Ghi chú<input id="dlNote" style="width:100%"></label>
+    </div>
+    <div class="row end" style="margin-top:8px">
+      <label class="btn"><input id="dlImg" type="file" accept="image/png,image/jpeg,image/tiff,.tif,.tiff" multiple hidden>Chọn ảnh tranh *</label>
+      <span class="note grow" id="dlImgInfo">Chưa chọn ảnh</span>
+      <button id="dlAdd" class="main">Lên đơn</button>
+    </div>
+    <div class="err" id="dlErr" role="alert"></div>
+    <p class="note">Ảnh tranh được chép nguyên bản gốc vào thư mục lưu của phân loại để in, app chỉ thu nhỏ bản xem trước. Đơn chuyển ngay sang tab Sản xuất.</p>
+  </div>
+  <div class="panel" style="background:var(--warn-bg)">
+    <h2>Cần tạo đơn gửi hàng</h2>
+    <div class="tbl" style="background:var(--panel)"><table>
+      <thead><tr><th>Ảnh</th><th>Mã</th><th>Khách</th><th>Địa chỉ</th><th>Tranh</th><th class="num">Tiền</th><th>Người lên đơn</th><th>Xong lúc</th><th></th></tr></thead>
+      <tbody id="dlShip"></tbody>
+    </table></div>
+  </div>
+  <div class="panel">
+    <div class="row end">
+      <h2 class="grow" style="margin:0">Thống kê đơn lẻ theo người lên đơn</h2>
+      <label class="f">Xem theo<select id="dlKind"><option value="day">Ngày</option><option value="week">Tuần</option><option value="month" selected>Tháng</option></select></label>
+      <label class="f">Từ ngày<input id="dlFrom" type="date"></label>
+      <label class="f">Đến ngày<input id="dlTo" type="date"></label>
+    </div>
+    <div class="tbl" style="margin-top:8px"><table>
+      <thead><tr><th>Kỳ</th><th>Người lên đơn</th><th class="num">Số đơn</th><th class="num">Số tranh</th><th class="num">Doanh số</th><th class="num">Đang làm</th><th class="num">Chờ gửi</th><th class="num">Đã gửi</th><th class="num">Hủy</th></tr></thead>
+      <tbody id="dlStats"></tbody>
+    </table></div>
+    <p class="note">Doanh số không tính đơn hủy và đơn xong mà khách hủy.</p>
+  </div>
+  <div class="panel">
+    <div class="row end"><h2 class="grow" style="margin:0">Danh sách đơn lẻ</h2><input id="dlQ" placeholder="Tìm SĐT, tên khách, mã" size="24" aria-label="Tìm đơn lẻ"></div>
+    <div class="tbl" style="margin-top:8px;max-height:560px;overflow:auto"><table>
+      <thead><tr><th>Ảnh</th><th>Ngày</th><th>Mã</th><th>Khách</th><th>Địa chỉ</th><th>Tranh</th><th class="num">Tiền</th><th>Người lên đơn</th><th>Tình trạng</th></tr></thead>
+      <tbody id="dlRows"></tbody>
+    </table></div>
   </div>
 </section>
 
@@ -850,7 +904,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const S = { src: null, dst: null, index: {}, handles: new Map(), orders: [], records: [], filter: 'all', cfg: { minDpi: 100, maxCrop: 25 },
   machine: '', mine: { label: '', missing: [], confirms: [], names: {} }, shared: Core.mergeShared([]),
-  cat: null, admin: false, openGroups: new Set(), imgKeys: new Set(), imgRemote: new Map() };
+  cat: null, admin: false, leSeen: new Set(), openGroups: new Set(), imgKeys: new Set(), imgRemote: new Map() };
 const normCat = c => ({ t: 0, list: [], common: 'Chưa phân loại', products: {}, folders: {}, listings: {}, lfolders: {}, known: {}, saveDirs: {}, ...(c || {}) });
 S.cat = normCat();
 const PW = { salt: 'newhouse-layfilein-v1', hash: 'b77ea80da681b3c9d1f0366943dfae579bbdb2ecc63b718b9cdb688644ded6c6' };
@@ -898,6 +952,8 @@ async function enter() {
   $('cfgBase').value = S.cfg.srcBase || '';
   $('cfgKhoThumb').checked = !!S.cfg.khoThumb;
   S.imgKeys = new Set(await kvGet('imgKeys') || []); rebuildImgIndex();
+  S.leSeen = new Set(await kvGet('leSeen') || []);
+  $('dlBy').value = await kvGet('dlBy') || '';
   renderCat();
   $('cfgId').value = S.machine; $('cfgLabel').value = S.mine.label;
   $('minDpi').value = S.cfg.minDpi; $('maxCrop').value = S.cfg.maxCrop;
@@ -937,7 +993,8 @@ function askAdmin(msg) {
 /* ---- tab ---- */
 document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => {
   document.querySelectorAll('nav button').forEach(x => x.setAttribute('aria-selected', x === b));
-  for (const t of ['don', 'sx', 'tw', 'tk', 'cd']) $('tab-' + t).hidden = t !== b.dataset.tab;
+  for (const t of ['don', 'dl', 'sx', 'tw', 'tk', 'cd']) $('tab-' + t).hidden = t !== b.dataset.tab;
+  if (b.dataset.tab === 'dl') syncStats().then(analyze);
   if (b.dataset.tab === 'sx') syncStats().then(analyze);
   if (b.dataset.tab === 'tk') { renderStats(); syncShared(); }
   if (b.dataset.tab === 'tw') syncShared();
@@ -1097,7 +1154,10 @@ function analyze() {
 async function setProd(r, v) {
   Object.assign(r, { prod: v, prodT: Date.now(), prodBy: S.machine, t: Date.now() });
   if (v === 'huy') r.stockUsed = r.stockUsed || 0;
+  /* đơn lẻ làm xong thì phải tạo đơn gửi hàng cho khách */
+  if (r.kind === 'le') { if (v === 'xong' && r.ship !== 'da') r.ship = 'can'; else if (v !== 'xong' && r.ship === 'can') delete r.ship; }
   await saveStats();
+  if (r.kind === 'le' && r.ship === 'can') { S.leSeen.add(r.id); kvSet('leSeen', [...S.leSeen]); shipAlert([r]); }
 }
 async function setOrderProd(o, v) {
   if (v === 'huydon' && !confirm(`Hủy đơn ${isAuto(o) ? 'nhập tay' : shortId(o.orderId)}: ${codeLabel(o)}?`)) return;
@@ -1137,7 +1197,7 @@ const PROD = { xong: ['ok', 'Đã xong'], huy: ['warn', 'Đã xong mà hủy'], 
 const fmtT = t => t ? new Date(t).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' }) : '';
 const localDay = t => { const d = new Date(t); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
 const recThumb = r => { const k = [Core.productKey({ variation: r.variation || '' }), r.code].map(imgKey).find(hasImg); return k ? imgTag(k, r.code) : ''; };
-const recId = r => r.orderId ? `<b title="${esc(r.orderId)}">${esc(shortId(r.orderId))}</b>` : 'Nhập tay';
+const recId = r => r.kind === 'le' ? `<b>${esc(r.code)}</b> <span class="tag mut">đơn lẻ</span>` : r.orderId ? `<b title="${esc(r.orderId)}">${esc(shortId(r.orderId))}</b>` : 'Nhập tay';
 const whoDid = id => (S.shared.names[id] && S.shared.names[id].name) || (S.shared.labels[id] && S.shared.labels[id].label) || id || '';
 function renderProd() {
   const live = S.records.filter(r => !r.del);
@@ -1145,6 +1205,7 @@ function renderProd() {
   $('sxRows').innerHTML = doing.map(r => `<tr><td>${recThumb(r)}</td><td>${esc(r.date.split('-').reverse().join('/'))}</td><td>${recId(r)}</td><td><b>${esc(r.code)}</b></td><td>${r.w}x${r.h}</td><td class="num">${r.count}</td><td class="path">${esc(r.file)}</td>
     <td class="noprint" style="white-space:nowrap"><button class="link" data-pr="${r.id}" data-v="xong">Đã xong</button><br><button class="link" data-pr="${r.id}" data-v="huy">Xong mà hủy</button><br><button class="link" data-pr="${r.id}" data-v="huydon">Hủy đơn</button></td></tr>`).join('')
     || '<tr><td colspan="8" class="note">Không có đơn nào đang làm.</td></tr>';
+  renderLe();
   const a = $('sxFrom').value, b = $('sxTo').value, st = $('sxSt').value;
   const done = live.filter(r => r.prod && (!st || r.prod === st) && (!a || localDay(r.prodT || r.t) >= a) && (!b || localDay(r.prodT || r.t) <= b))
     .sort((x, y) => (y.prodT || 0) - (x.prodT || 0)).slice(0, 500);
@@ -1178,6 +1239,94 @@ function renderProd() {
   });
 }
 for (const id of ['sxFrom', 'sxTo', 'sxSt']) $(id).addEventListener('change', renderProd);
+
+/* ---- đơn lẻ: lưu trong dòng thống kê dùng chung (kind 'le'), kèm khách, SĐT, địa chỉ, tiền, người lên đơn ---- */
+const money = v => (+v || 0).toLocaleString('vi-VN') + ' đ';
+const leCreator = r => r.creator || whoDid(r.creatorMachine) || '(không rõ)';
+const LE_ST = { lam: ['mut', 'Đang làm'], cho: ['warn', 'Chờ gửi hàng'], gui: ['ok', 'Đã gửi'], huy: ['err', 'Hủy'] };
+const leState = r => r.prod === 'huydon' || r.prod === 'huy' ? 'huy' : r.ship === 'da' ? 'gui' : r.prod === 'xong' ? 'cho' : 'lam';
+const leCust = r => `${r.cust && r.cust.name ? `<b>${esc(r.cust.name)}</b><br>` : ''}${esc(r.cust ? r.cust.phone : '')}`;
+let dlFiles = [];
+function shipAlert(list) {
+  alert(`CẦN TẠO ĐƠN GỬI HÀNG (${list.length} đơn lẻ đã xong):\n\n` + list.map(r =>
+    `${r.code} · ${r.w}x${r.h} × ${r.count}\nKhách: ${(r.cust && r.cust.name) || ''} ${r.cust ? r.cust.phone : ''}\nĐịa chỉ: ${r.cust ? r.cust.addr : ''}\nThu: ${money(r.price)}`).join('\n\n'));
+}
+function newLeCode() {
+  const used = new Set(S.records.map(r => r.code));
+  let c; do c = 'DL' + String(Math.floor(Math.random() * 1e5)).padStart(5, '0'); while (used.has(c));
+  return c;
+}
+$('dlImg').addEventListener('change', e => {
+  dlFiles = [...e.target.files];
+  $('dlImgInfo').textContent = dlFiles.length ? `${dlFiles.length} ảnh: ${dlFiles.map(f => f.name).join(', ')}` : 'Chưa chọn ảnh';
+});
+$('dlBy').addEventListener('change', e => kvSet('dlBy', e.target.value.trim()));
+$('dlAdd').addEventListener('click', async () => {
+  const err = m => { $('dlErr').textContent = m; return null; };
+  $('dlErr').textContent = '';
+  const by = $('dlBy').value.trim(), phone = $('dlPhone').value.replace(/[^\d+]/g, ''), addr = $('dlAddr').value.trim(), size = Core.parseSizeText($('dlSize').value);
+  if (!by) return err('Hãy nhập tên người lên đơn.');
+  if (!/^\+?\d{9,12}$/.test(phone)) return err('Số điện thoại chưa đúng.');
+  if (!addr) return err('Hãy nhập địa chỉ.');
+  if (!size) return err('Kích thước chưa đúng, ví dụ 40x60.');
+  if (!dlFiles.length) return err('Hãy chọn ảnh tranh.');
+  if (!S.dst || !await ensurePerm(S.dst, 'readwrite')) return err('Hãy chọn hoặc kết nối thư mục lưu file cần in (thư mục chung) trước khi lên đơn lẻ.');
+  $('dlAdd').disabled = true;
+  try {
+    const code = newLeCode(), qty = Math.max(1, +$('dlQty').value || 1), cat = S.cat.list.find(c => c.id === $('dlCat').value) || null;
+    const sizeName = Core.sizeKey(size.w, size.h), dir = await subDir(await catRoot(cat), today(), sizeName), names = [];
+    for (let i = 0; i < dlFiles.length; i++) {
+      const f = dlFiles[i], ext = f.name.split('.').pop().toLowerCase();
+      const name = safe(`${code}${dlFiles.length > 1 ? '_tam' + (i + 1) : ''}_${sizeName}_SL${qty}.${ext}`);
+      await writeParts(dir, name, [f]); names.push(name);
+      try { await saveImg(imgId(imgKey(code), i + 1), f); } catch (_) { /* tif không xem trước được thì bỏ qua */ }
+    }
+    const o = { orderId: code, key: 'le|' + code, code, variant: null, variation: code, size, qty, pieces: 1 };
+    await record(o, 'Đơn lẻ', `${dirLabel(cat)}\\${today()}\\${sizeName}\\${names.join(', ')}`, {
+      kind: 'le', cust: { name: $('dlName').value.trim(), phone, addr }, price: +$('dlPrice').value.replace(/[^\d]/g, '') || 0,
+      note: $('dlNote').value.trim(), creator: by, creatorMachine: S.machine, catId: cat ? cat.id : '' });
+    for (const id of ['dlName', 'dlPhone', 'dlAddr', 'dlSize', 'dlPrice', 'dlNote']) $(id).value = '';
+    $('dlQty').value = 1; $('dlImg').value = ''; dlFiles = []; $('dlImgInfo').textContent = `Đã lên đơn ${code}. Chưa chọn ảnh cho đơn tiếp theo.`;
+    analyze();
+  } catch (e) { err('Không lên được đơn: ' + e.message); }
+  $('dlAdd').disabled = false;
+});
+function renderLe() {
+  const les = S.records.filter(r => !r.del && r.kind === 'le');
+  const ship = les.filter(r => leState(r) === 'cho').sort((a, b) => (a.prodT || 0) - (b.prodT || 0));
+  $('dlBadge').hidden = !ship.length; $('dlBadge').textContent = ship.length ? `${ship.length} chờ gửi` : '';
+  $('dlShip').innerHTML = ship.map(r => `<tr><td>${recThumb(r)}</td><td><b>${esc(r.code)}</b></td><td>${leCust(r)}</td><td>${esc(r.cust ? r.cust.addr : '')}</td><td>${r.w}x${r.h} × ${r.count}</td><td class="num">${money(r.price)}</td><td>${esc(leCreator(r))}</td><td>${fmtT(r.prodT)}</td>
+    <td class="noprint"><button class="main" data-ship="${r.id}">Đã tạo đơn gửi</button></td></tr>`).join('') || '<tr><td colspan="9" class="note">Không có đơn nào chờ gửi.</td></tr>';
+  const kind = $('dlKind').value, a = $('dlFrom').value, b = $('dlTo').value, per = {};
+  for (const r of les) {
+    if ((a && r.date < a) || (b && r.date > b)) continue;
+    const st = leState(r), k = `${Core.periodKey(r.date, kind)}|${leCreator(r)}`;
+    const P = per[k] = per[k] || { period: Core.periodKey(r.date, kind), who: leCreator(r), n: 0, pcs: 0, money: 0, lam: 0, cho: 0, gui: 0, huy: 0 };
+    P.n++; P[st]++;
+    if (st !== 'huy') { P.pcs += r.count; P.money += r.price || 0; }
+  }
+  const rows = Object.values(per).sort((x, y) => y.period.localeCompare(x.period) || y.money - x.money);
+  $('dlStats').innerHTML = rows.map(p => `<tr><td>${labelPeriod(p.period, kind)}</td><td>${esc(p.who)}</td><td class="num">${p.n}</td><td class="num">${p.pcs}</td><td class="num"><b>${money(p.money)}</b></td><td class="num">${p.lam}</td><td class="num">${p.cho}</td><td class="num">${p.gui}</td><td class="num">${p.huy}</td></tr>`).join('')
+    || '<tr><td colspan="9" class="note">Chưa có đơn lẻ nào.</td></tr>';
+  const q = $('dlQ').value.trim().toLowerCase();
+  const list = les.filter(r => !q || [r.code, r.cust && r.cust.phone, r.cust && r.cust.name, r.cust && r.cust.addr].join(' ').toLowerCase().includes(q)).sort((x, y) => y.t - x.t).slice(0, 300);
+  $('dlRows').innerHTML = list.map(r => { const [c, l] = LE_ST[leState(r)];
+    return `<tr><td>${recThumb(r)}</td><td>${esc(r.date.split('-').reverse().join('/'))}</td><td><b>${esc(r.code)}</b></td><td>${leCust(r)}</td><td>${esc(r.cust ? r.cust.addr : '')}${r.note ? `<div class="note">${esc(r.note)}</div>` : ''}</td>
+      <td>${r.w}x${r.h} × ${r.count}</td><td class="num">${money(r.price)}</td><td>${esc(leCreator(r))}</td><td><span class="tag ${c}">${l}</span>${r.shipCode ? `<div class="note">Vận đơn: ${esc(r.shipCode)}</div>` : ''}</td></tr>`; }).join('')
+    || '<tr><td colspan="9" class="note">Chưa có đơn lẻ nào.</td></tr>';
+  document.querySelectorAll('[data-ship]').forEach(btn => btn.onclick = async () => {
+    const r = S.records.find(x => x.id === btn.dataset.ship);
+    const code = prompt(`Đã tạo đơn gửi cho ${r.code}. Nhập mã vận đơn (có thể để trống):`, '');
+    if (code === null) return;
+    Object.assign(r, { ship: 'da', shipCode: code.trim(), shipT: Date.now(), shipBy: S.machine, t: Date.now() });
+    await saveStats(); analyze();
+  });
+  /* đơn lẻ do máy này lên mà máy khác vừa bấm Đã xong: báo một lần */
+  const fresh = ship.filter(r => r.creatorMachine === S.machine && !S.leSeen.has(r.id));
+  if (fresh.length) { fresh.forEach(r => S.leSeen.add(r.id)); kvSet('leSeen', [...S.leSeen]); setTimeout(() => shipAlert(fresh), 0); }
+}
+for (const id of ['dlKind', 'dlFrom', 'dlTo']) $(id).addEventListener('change', renderLe);
+$('dlQ').addEventListener('input', renderLe);
 $('sxReload').addEventListener('click', async () => { if (S.dst) await ensurePerm(S.dst, 'readwrite'); await syncStats(); analyze(); });
 
 /* ---- bảng phân loại ---- */
@@ -1221,6 +1370,9 @@ function renderCat() {
   const keep = $('mCat').value;
   $('mCat').innerHTML = '<option value="">Chưa phân loại</option>' + c.list.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('');
   $('mCat').value = c.list.some(x => x.id === keep) ? keep : '';
+  const keepDl = $('dlCat').value;
+  $('dlCat').innerHTML = `<option value="">${esc(c.common)} (thư mục chung)</option>` + c.list.filter(x => !x.linkOnly).map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('');
+  $('dlCat').value = c.list.some(x => x.id === keepDl) ? keepDl : '';
   const find = id => c.list.find(x => x.id === id);
   document.querySelectorAll('[data-cn]').forEach(i => i.onchange = () => { find(i.dataset.cn).name = i.value.trim() || 'Phân loại'; saveCat(); });
   document.querySelectorAll('[data-ck]').forEach(i => i.onchange = () => { find(i.dataset.ck).kw = i.value; saveCat(); });
