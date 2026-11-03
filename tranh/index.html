@@ -119,6 +119,9 @@ td select{max-width:320px;padding:3px 5px}
 </header>
 
 <section id="tab-don">
+  <div class="panel" id="connWarn" hidden style="background:var(--warn-bg)">
+    <div class="row"><span class="grow" id="connMsg"></span><button id="connBtn" class="main">Kết nối thư mục chung</button></div>
+  </div>
   <div class="panel" id="noApi" hidden><span class="err">Trình duyệt này không chọn được thư mục. Hãy mở link bằng Chrome hoặc Edge trên máy tính.</span></div>
   <div class="panel noprint">
     <div class="row">
@@ -166,7 +169,7 @@ td select{max-width:320px;padding:3px 5px}
     </div>
     <div class="tbl" style="margin-top:10px">
       <table>
-        <thead><tr><th>Ngày đặt</th><th>Mã đơn</th><th>Mã tranh</th><th>Cỡ</th><th class="num">SL</th><th class="num">Tổng tấm</th><th>File</th><th>Trạng thái</th><th class="noprint"></th></tr></thead>
+        <thead><tr><th>Ngày đặt</th><th>Mã đơn</th><th>Mã tranh</th><th>Cỡ</th><th class="num">SL</th><th class="num">Tổng tấm</th><th>Ảnh</th><th>File</th><th>Trạng thái</th><th class="noprint"></th></tr></thead>
         <tbody id="rows"></tbody>
       </table>
     </div>
@@ -1263,6 +1266,7 @@ function renderProducts() {
     const now = Core.classify({ product: real, variation: '' }, c);
     return `<div class="panel" style="padding:10px;margin-bottom:8px">
       <div><b>${esc(G.name)}</b> <span class="note">${G.items.length} mẫu${G.n ? `, ${G.n} dòng đơn` : ''}</span></div>
+      ${groupStrip(G)}
       <div class="row end" style="margin-top:6px">
         ${real ? `<label class="f">Phân loại cả sản phẩm<select data-gl="${gi}">${catOpts(c.listings[real], 'Theo từ khóa')}</select></label>
         <label class="f">Thư mục lấy file cả sản phẩm<span><input data-glf="${gi}" value="${esc(c.lfolders[real] || '')}" placeholder="Tự tìm trong kho" size="20"> <button class="link" data-glp="${gi}">Chọn…</button></span></label>` : ''}
@@ -1271,9 +1275,9 @@ function renderProducts() {
       ${real ? `<div class="note">Lưu vào: ${esc(now ? now.name : c.common)}</div>` : ''}
       ${open ? `<div class="tbl" style="margin-top:8px"><table><thead><tr><th>Ảnh</th><th>Mẫu (Tên phân loại hàng)</th><th class="num">Dòng đơn</th><th>Phân loại riêng</th><th>Thư mục lấy file riêng</th></tr></thead><tbody>${G.items.map(it => {
         const cur = Core.classify({ product: real, variation: it.k }, c);
-        const ik = imgKey(it.k), has = hasImg(ik);
+        const ik = itemImgKey(it.k), has = hasImg(ik);
         return `<tr><td>${has ? imgTag(ik, it.k) : S.cfg.khoThumb ? thumbTag(itemRel(it.k, real), it.k) : ''}
-            <label class="link" style="cursor:pointer;font-size:12px;padding:0"><input type="file" accept="image/png,image/jpeg" multiple hidden data-up="${esc(it.k)}">Thêm ảnh</label>${has ? ` <button class="link" data-rmimg="${esc(it.k)}" style="font-size:12px;padding:0 2px">Xóa ảnh</button>` : ''}</td>
+            <label class="link" style="cursor:pointer;font-size:12px;padding:0"><input type="file" accept="image/png,image/jpeg" multiple hidden data-up="${esc(it.k)}">Thêm ảnh</label>${has ? ` <button class="link" data-rmimg="${esc(ik)}" style="font-size:12px;padding:0 2px">Xóa ảnh</button>` : ''}</td>
           <td><b>${esc(it.k)}</b></td><td class="num">${it.n || ''}</td>
           <td><select data-pm="${esc(it.k)}" aria-label="Phân loại">${catOpts(c.products[it.k], 'Theo sản phẩm / từ khóa')}</select><div class="note">Lưu vào: ${esc(cur ? cur.name : c.common)}</div></td>
           <td><input data-pf="${esc(it.k)}" value="${esc(c.folders[it.k] || '')}" placeholder="${esc(c.lfolders[real] || 'Tự tìm trong kho')}" size="22" aria-label="Thư mục lấy file"> <button class="link" data-pfp="${esc(it.k)}">Chọn…</button></td></tr>`;
@@ -1295,7 +1299,7 @@ function renderProducts() {
   });
   document.querySelectorAll('[data-rmimg]').forEach(b => b.onclick = async () => {
     if (!confirm(`Xóa hết ảnh của ${b.dataset.rmimg}?`)) return;
-    await deleteImgs(imgKey(b.dataset.rmimg)); refreshImgs();
+    await deleteImgs(b.dataset.rmimg); refreshImgs();
   });
 }
 /* ---- ảnh xem trước: lấy từ file trong kho, tải dần khi cuộn tới, nhớ lại để không đọc lại ---- */
@@ -1344,6 +1348,12 @@ const imgLookup = o => [Core.productKey(o), codeLabel(o), o.code].map(imgKey).fi
 const imgTag = (k, label) => {
   const ids = imgsOf(k); if (!ids.length) return '';
   return `<span class="tw"><img class="thumb" data-img="${esc(ids[0])}" data-k="${esc(k)}" alt="Ảnh ${esc(label || k)}" title="${esc(k)}">${ids.length > 1 ? `<i>${ids.length} ảnh</i>` : ''}</span>`;
+};
+/* mẫu trong danh sách sản phẩm tìm ảnh giống dòng đơn: theo tên mẫu, rồi theo mã tranh */
+const itemImgKey = k => { const po = { ...Core.parseVariation({ variation: k }), variation: k }; return imgLookup(po) || imgKey(k); };
+const groupStrip = G => {
+  const ks = []; for (const it of G.items) { const k = itemImgKey(it.k); if (hasImg(k) && !ks.includes(k)) ks.push(k); if (ks.length >= 6) break; }
+  return ks.length ? `<div class="row" style="gap:6px;margin-top:6px">${ks.map(k => imgTag(k, k)).join('')}</div>` : '';
 };
 const rowThumb = o => { const k = imgLookup(o); return k ? imgTag(k, codeLabel(o)) : S.cfg.khoThumb ? thumbTag(previewRel(o), codeLabel(o)) : ''; };
 async function imgBlob(id) {
@@ -1553,6 +1563,11 @@ async function syncShared() {
   } catch (e) { console.warn(e); }
   S.shared = Core.mergeShared(files);
   $('twShare').hidden = shared;
+  /* chưa nối thư mục chung thì ảnh, thống kê, trạng thái của máy khác không hiện: nhắc rõ ở đầu trang */
+  $('connWarn').hidden = shared || !canPick;
+  $('connMsg').textContent = S.dst
+    ? `Chưa kết nối lại thư mục chung “${S.dst.name}” sau khi mở trang, nên ảnh mẫu, thống kê và trạng thái sản xuất của các máy khác chưa hiện.`
+    : 'Máy này chưa chọn thư mục lưu file cần in (thư mục chung trên ổ mạng), nên ảnh mẫu, thống kê và trạng thái sản xuất chưa dùng chung với các máy khác.';
   renderDesign(); renderOrders();
 }
 async function confirmModel(key, files) {
@@ -1614,7 +1629,8 @@ function renderOrders() {
       <td>${o.size ? Core.sizeKey(o.size.w, o.size.h) : `<input data-size="${o.id}" placeholder="40x60" size="6" style="padding:2px 4px">`}</td>
       <td class="num">${o.qty}</td>
       <td class="num"><input data-pcs="${o.id}" type="number" min="1" value="${o.qty * o.pieces}" aria-label="Tổng tấm" style="width:62px;padding:2px 4px" ${o.status === 'done' ? 'disabled' : ''}></td>
-      <td>${rowThumb(o)}<span class="path">${file}</span>${sel}${o.warn ? `<div class="warnline">${esc(o.warn)}</div>` : ''}</td>
+      <td>${rowThumb(o)}<label class="link noprint" style="cursor:pointer;font-size:12px;padding:0;white-space:nowrap"><input type="file" accept="image/png,image/jpeg" multiple hidden data-upo="${o.id}">+ Thêm ảnh</label></td>
+      <td><span class="path">${file}</span>${sel}${o.warn ? `<div class="warnline">${esc(o.warn)}</div>` : ''}</td>
       <td><span class="tag ${cls}">${label}</span>${m && m.note && o.status !== 'done' ? `<div class="note">${esc(m.note)}</div>` : ''}${o.err ? `<div class="err">${esc(o.err)}</div>` : ''}${o.status === 'missing' && o.code ? (S.shared.live[Core.modelKey(o)] ? '<div class="note"><span class="tag ok">Thiết kế đã xác nhận</span> Bấm Quét lại kho để lấy file</div>' : `<div style="margin-top:4px" class="noprint"><button class="link" data-cfo="${esc(Core.modelKey(o))}" data-n="${Math.round(o.pieces)}">Xác nhận đã có file</button></div>`) : ''}</td>
       <td class="noprint" style="white-space:nowrap">${o.status === 'done'
         ? `<button class="link" data-px="${o.id}" data-v="xong">Đã xong</button><br><button class="link" data-px="${o.id}" data-v="huy">Xong mà hủy</button><br>`
@@ -1627,6 +1643,14 @@ function renderOrders() {
   document.querySelectorAll('[data-copy]').forEach(b => b.onclick = () => copyText(b.dataset.copy, b));
   $('copyLinks').hidden = !S.orders.some(o => o.links && o.status === 'done');
   document.querySelectorAll('[data-cfo]').forEach(b => b.onclick = () => confirmModel(b.dataset.cfo, +b.dataset.n));
+  document.querySelectorAll('[data-upo]').forEach(i => i.onchange = async () => {
+    const o = S.orders.find(x => x.id === i.dataset.upo);
+    /* ảnh nhập từ dòng đơn lưu theo mã tranh, để mọi cỡ của mẫu này cùng dùng */
+    const k = imgLookup(o) || imgKey(o.code ? codeLabel(o) : Core.productKey(o));
+    let no = nextImgNo(k);
+    for (const f of i.files) { try { await saveImg(imgId(k, no++), f); } catch (err) { alert(`Không đọc được ảnh ${f.name}: ${err.message}`); } }
+    refreshImgs();
+  });
   document.querySelectorAll('[data-px]').forEach(b => b.onclick = () => setOrderProd(S.orders.find(x => x.id === b.dataset.px), b.dataset.v));
   updateRun();
 }
@@ -1639,6 +1663,12 @@ $('copyLinks').addEventListener('click', e => copyText(S.orders.filter(o => o.li
   .map(o => `${codeLabel(o)}\t${Core.sizeKey(o.size.w, o.size.h)}\tSL${Math.round(o.qty * o.pieces)}\t${o.links.join('\t')}`).join('\r\n'), e.target));
 $('cfgBase').addEventListener('change', e => { S.cfg.srcBase = e.target.value.trim(); kvSet('cfg', S.cfg); });
 $('cfgKhoThumb').addEventListener('change', e => { S.cfg.khoThumb = e.target.checked; kvSet('cfg', S.cfg); refreshImgs(); });
+$('connBtn').addEventListener('click', async () => {
+  if (!S.dst) { $('pickDst').click(); return; }
+  if (!await ensurePerm(S.dst, 'readwrite')) return;
+  $('dstName').textContent = S.dst.name;
+  await syncStats(); await syncShared(); analyze(); updateRun();
+});
 $('rescan').addEventListener('click', async () => {
   if (S.src && await ensurePerm(S.src, 'read')) scan(); else $('scanInfo').textContent = 'Hãy chọn thư mục lấy file trước.';
 });
