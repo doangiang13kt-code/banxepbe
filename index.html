@@ -199,6 +199,13 @@ button:disabled{opacity:.5;cursor:not-allowed}
       <div class="note">Chỉ đổ trên phần hình; không đổ lên dấu định vị và tên file. Ví dụ #FFFFFF, #FFE6E6, #EBF0FF, #EBFAEB, #FFFACD được tính là màu nhạt.</div>
     </div>
     </div>
+    <div id="spotModeBox">
+      <label>Cách đổ kênh Spot1<select id="spotMode">
+        <option value="deu" selected>Tô đều 4d4d4d</option>
+        <option value="vung">Tô theo vùng (chỗ trắng/nhạt đổ đen)</option>
+      </select></label>
+      <div class="note">Phần hình thu vào 2 px rồi tô. "Theo vùng": chỗ hình màu trắng hoặc nhạt tô đen thuần, chỗ khác tô 4d4d4d.</div>
+    </div>
     <label>Nén TIF<select id="comp">
       <option value="lzw" selected>LZW (như Photoshop)</option>
       <option value="zip">ZIP (file nhỏ hơn)</option>
@@ -568,7 +575,7 @@ function params() {
     markSeg: Math.max(100, n('markSeg') * 10), markLen: Math.max(3, n('markLen')), markTh: Math.max(0.1, n('markTh')),
     machine: $('machine').value, dotD: Math.max(1, n('dotD')), hbcSeg: n('hbcSeg') || 600,
     dpi: n('dpi') || 200, alpha: $('alpha').checked, comp: $('comp').value,
-    label: $('label').checked, spot: $('spot').checked, lightMin: $('lightOn').checked ? Math.min(255, Math.max(0, n('lightMin'))) : 256, spotShrink: Math.max(0, n('spotShrink')),
+    label: $('label').checked, spot: $('spot').checked, lightMin: $('spotMode').value === 'vung' && $('lightOn').checked ? Math.min(255, Math.max(0, n('lightMin'))) : 256, // 256 = không có vùng nhạt → tô đều spotShrink: Math.max(0, n('spotShrink')),
     spotVal: (h => /^[0-9a-f]{6}$/i.test(h) ? Math.round(0.299 * parseInt(h.slice(0, 2), 16) + 0.587 * parseInt(h.slice(2, 4), 16) + 0.114 * parseInt(h.slice(4), 16)) : 77)($('spotHex').value.trim().replace('#', ''))
   };
   p.dotE = 0;
@@ -586,7 +593,7 @@ $('machine').addEventListener('change', () => {
   const m = $('machine').value;
   SIZES[lastMachine] = [$('maxW').value, $('maxH').value]; lastMachine = m;
   [$('maxW').value, $('maxH').value] = SIZES[m];
-  $('optHbc').hidden = m === 'tranh'; $('optTranh').hidden = m !== 'tranh'; $('spotBox').hidden = m === 'tranh'; $('corelBox').hidden = m === 'tranh';
+  $('optHbc').hidden = m === 'tranh'; $('optTranh').hidden = m !== 'tranh'; $('spotBox').hidden = m === 'tranh'; $('spotModeBox').hidden = m === 'tranh'; $('corelBox').hidden = m === 'tranh';
 });
 
 // độ đục (0-255) từ đó điểm ảnh được tính là phần hình: 70% (người dùng chọn); vùng mờ hơn không tính vào đường cắt và kênh Spot1
