@@ -1202,27 +1202,40 @@ function finishSheet(G, p, items) {
     const e = p.dotE;
     sh.dots = [[e, e], [sh.W - e, e], [e, sh.H - e], [sh.W - e, sh.H - e]];
   }
-  if (hbcMarks) { const m = pluginMarks(cb, items); sh.marks = m.rects; sh.tri = m.tri; } else sh.marks = marksOf(sh, p);
+  if (hbcMarks) {
+    // chữ T giữa luôn đủ cỡ (nhánh ngang 20 mm) cho máy đọc: hình nằm ngang tầm chữ T thì đẩy đường dấu cạnh đó ra xa hơn, tờ rộng thêm
+    const F = PLUGIN.F, yc = (cb[1] + cb[3]) / 2, near = it => it.bb[1] < yc + PLUGIN.T / 2 + 1 && it.bb[3] > yc - PLUGIN.T / 2 - 1;
+    let FL = F, FR = F;
+    for (const it of items) if (near(it)) { FL = Math.max(FL, cb[0] + PLUGIN.ARM + 1 - it.bb[0]); FR = Math.max(FR, it.bb[2] + 1 + PLUGIN.ARM - cb[2]); }
+    FL = Math.ceil(FL * 2) / 2; FR = Math.ceil(FR * 2) / 2;
+    const sx = FL - F;
+    if (sx) for (const it of items) {
+      it.bx += sx; it.ix0 += sx; it.ix1 += sx; it.bb[0] += sx; it.bb[2] += sx;
+      it.paths = it.paths.map(L => L.map(([x, y]) => [x + sx, y]));
+    }
+    cb[0] += sx; cb[2] += sx; sh.W += sx + FR - F;
+    sh.mf = [cb[0] - FL, cb[1] - F, cb[2] + FR, cb[3] + F]; // khung dấu (đường giữa nét)
+    const m = pluginMarks(sh.mf); sh.marks = m.rects; sh.tri = m.tri;
+  } else sh.marks = marksOf(sh, p);
   return sh;
 }
 // Dấu định vị y như plugin máy HBC tự thêm trong CorelDRAW (đo từ file mẫu "file corel mau.cdr", đối tượng LMarkLine2 + DIR):
 // nét K100 dày 1 mm; 4 chữ L mỗi nhánh dài 20 mm; 2 chữ T ở giữa chiều cao: nét dọc 40 mm trên đường dấu, nét ngang vào tới khung;
 // tam giác DIR ở giữa phía trên. Plugin đặt góc dấu cách khung đường cắt 20 mm; theo yêu cầu người dùng app đặt 10 mm (F), giữ nguyên cỡ dấu.
 const PLUGIN = { F: 10, ARM: 20, T: 1, MID: 40, triBase: 8.75, triTip: 12.5, triHalf: 2.165 };
-function pluginMarks([x0, y0, x1, y1], items) {
-  const F = PLUGIN.F, A = PLUGIN.ARM - F, h = PLUGIN.T / 2, yc = (y0 + y1) / 2, xc = (x0 + x1) / 2, M = PLUGIN.MID / 2;
-  // nét ngang chữ T dừng trước phần hình 1 mm (chế độ cắt vào trong: hình rộng hơn đường cắt)
-  const tl = Math.min(x0, ...items.map(it => it.bb[0] - 1)), tr = Math.max(x1, ...items.map(it => it.bb[2] + 1));
+// [X0, Y0, X1, Y1] = khung dấu (đường giữa nét); mọi nhánh luôn đủ cỡ chuẩn, không rút ngắn
+function pluginMarks([X0, Y0, X1, Y1]) {
+  const L = PLUGIN.ARM, h = PLUGIN.T / 2, yc = (Y0 + Y1) / 2, xc = (X0 + X1) / 2, M = PLUGIN.MID / 2, F = PLUGIN.F;
   const rects = [
     // góc trên trái / trên phải / dưới trái / dưới phải: nhánh ngang + nhánh dọc (phủ cả ô góc như nối góc vuông)
-    [x0 - F - h, y0 - F - h, x0 + A, y0 - F + h], [x0 - F - h, y0 - F - h, x0 - F + h, y0 + A],
-    [x1 - A, y0 - F - h, x1 + F + h, y0 - F + h], [x1 + F - h, y0 - F - h, x1 + F + h, y0 + A],
-    [x0 - F - h, y1 + F - h, x0 + A, y1 + F + h], [x0 - F - h, y1 - A, x0 - F + h, y1 + F + h],
-    [x1 - A, y1 + F - h, x1 + F + h, y1 + F + h], [x1 + F - h, y1 - A, x1 + F + h, y1 + F + h],
-    // chữ T giữa 2 cạnh bên
-    [x0 - F - h, yc - M, x0 - F + h, yc + M], [x0 - F, yc - h, tl, yc + h],
-    [x1 + F - h, yc - M, x1 + F + h, yc + M], [tr, yc - h, x1 + F, yc + h]];
-  const tri = [[xc, y0 - PLUGIN.triTip], [xc - PLUGIN.triHalf, y0 - PLUGIN.triBase], [xc + PLUGIN.triHalf, y0 - PLUGIN.triBase]];
+    [X0 - h, Y0 - h, X0 + L, Y0 + h], [X0 - h, Y0 - h, X0 + h, Y0 + L],
+    [X1 - L, Y0 - h, X1 + h, Y0 + h], [X1 - h, Y0 - h, X1 + h, Y0 + L],
+    [X0 - h, Y1 - h, X0 + L, Y1 + h], [X0 - h, Y1 - L, X0 + h, Y1 + h],
+    [X1 - L, Y1 - h, X1 + h, Y1 + h], [X1 - h, Y1 - L, X1 + h, Y1 + h],
+    // chữ T giữa 2 cạnh bên: nét dọc 40 mm, nét ngang 20 mm vào trong
+    [X0 - h, yc - M, X0 + h, yc + M], [X0, yc - h, X0 + L, yc + h],
+    [X1 - h, yc - M, X1 + h, yc + M], [X1 - L, yc - h, X1, yc + h]];
+  const y0 = Y0 + F, tri = [[xc, y0 - PLUGIN.triTip], [xc - PLUGIN.triHalf, y0 - PLUGIN.triBase], [xc + PLUGIN.triHalf, y0 - PLUGIN.triBase]];
   return { rects, tri };
 }
 /* dấu định vị: chữ L ở 4 góc, chữ T ở giữa 2 cạnh bên; mỗi nhánh tự rút ngắn để cách hình ≥ 1 mm */
@@ -1400,8 +1413,8 @@ function clipRing(R, a, b) { // cắt vòng kín R (toạ độ máy, mm) theo d
 }
 function buildHBC(sh, p) {
   const plan = cutPlan(sh, { ...p, origin: 'br', dotE: 0 }); // thứ tự cắt bắt đầu từ phía gốc (dưới phải)
-  const F = PLUGIN.F, fx1 = sh.cut[2] + F, fy1 = sh.cut[3] + F;
-  const fl = sh.cut[3] - sh.cut[1] + 2 * F, fw = sh.cut[2] - sh.cut[0] + 2 * F; // dài (theo X máy) × rộng khung
+  const mf = sh.mf || [sh.cut[0] - PLUGIN.F, sh.cut[1] - PLUGIN.F, sh.cut[2] + PLUGIN.F, sh.cut[3] + PLUGIN.F];
+  const fx1 = mf[2], fy1 = mf[3], fl = mf[3] - mf[1], fw = mf[2] - mf[0]; // gốc góc dưới phải khung dấu; dài (theo X máy) × rộng khung
   const n = Math.max(1, Math.ceil(fl / Math.max(50, p.hbcSeg) - 1e-9)), seg = fl / n, u = v => Math.round(v * 40);
   const loops = plan.loops.map(L => L.map(([x, y]) => [fy1 - y, fx1 - x])); // toạ độ máy, mm
   let out = 'CR;', pts = 0;
