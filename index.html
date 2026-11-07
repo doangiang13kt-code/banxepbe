@@ -172,7 +172,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
     </div>
     </div>
     <div class="sec" id="corelBox" style="padding:0;border:0">
-      <label>Chiều dài mỗi đoạn cắt (mm)<input type="number" id="hbcSeg" value="600" min="100" max="2000" step="10"></label>
+      <label>Chiều dài mỗi đoạn cắt (mm)<input type="number" id="hbcSeg" value="600" min="300" max="2000" step="10" autocomplete="off"></label>
       <div class="note">Như plugin: khung chia thành số đoạn bằng nhau gần nhất với số này (khung 1210 mm → 2 đoạn × 605 mm). Mỗi chỗ chia có 1 cặp chữ T để máy tìm dấu cắt tiếp.</div>
       <label>Địa chỉ máy cắt (trạm Corel)<input type="text" id="corelAddr" placeholder="192.168.x.x:8687" style="width:150px;font-family:var(--f-mono)"></label>
       <button id="btnCorel" disabled>Gửi sang Corel máy cắt</button>
@@ -1302,7 +1302,9 @@ const PLUGIN = { F: 10, ARM: 20, T: 1, MID: 40, triBase: 8.75, triTip: 12.5, tri
 // [X0, Y0, X1, Y1] = khung dấu (đường giữa nét); mọi nhánh luôn đủ cỡ chuẩn, không rút ngắn
 // số đoạn cắt của khung dài fl mm: các đoạn bằng nhau, mỗi đoạn ≤ ô "Chiều dài tối đa mỗi đoạn cắt"
 // (khớp 3 file plugin: khung 672,5 mm → 1 đoạn; 1049 mm → 2; 1210 mm → 2 đoạn × 605 mm, nên là làm tròn, không phải "không quá")
-const hbcSegs = (fl, p) => Math.max(1, Math.round(fl / Math.max(50, p.hbcSeg || 600)));
+const hbcSegs = (fl, p) => Math.max(1, Math.round(fl / segMm(p.hbcSeg)));
+// số gõ dưới 100 coi là cm (60 → 600 mm); không cho đoạn ngắn hơn 300 mm, tránh in hàng chục chữ T
+const segMm = v => { v = +v || 600; if (v < 100) v *= 10; return Math.min(2000, Math.max(300, v)); };
 function pluginMarks([X0, Y0, X1, Y1], ys) {
   const L = PLUGIN.ARM, h = PLUGIN.T / 2, xc = (X0 + X1) / 2, M = PLUGIN.MID / 2, F = PLUGIN.F;
   const rects = [
