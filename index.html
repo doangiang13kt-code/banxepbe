@@ -126,7 +126,8 @@ button:disabled{opacity:.5;cursor:not-allowed}
     <label>Khoảng bo (mm)<input type="number" id="offMm" value="4" min="0.5" max="20" step="0.5"></label>
     <label>Nối liền chỗ đường cắt sát nhau (mm)<input type="number" id="join" value="8" min="0" max="20" step="0.5"></label>
     <div class="note">Trong cùng 1 hình, khe giữa 2 đoạn đường cắt hẹp hơn số này sẽ được nối thành 1 đường bo liền. Hai hình khác nhau không bao giờ bị nối. 0 = tắt.</div>
-    <label>Kiểu đường bế<select id="shape"><option value="contour" selected>Theo viền hình</option><option value="rect">Vuông (chữ nhật bao hình)</option></select></label>
+    <label>Kiểu đường bế<select id="shape"><option value="contour" selected>Theo viền hình</option><option value="rect">Vuông (chữ nhật bao hình)</option><option value="line">Chia vạch (xếp thành hàng, bế đường thẳng)</option></select></label>
+    <div class="note" id="lineNote" hidden>Chia vạch: tem xếp thành từng hàng sát nhau, dao cắt các đường thẳng chạy suốt giữa 2 hàng và giữa 2 tem. Đường cắt cách mép hình theo ô Đường cắt (+4 mm bo ra: 2 tem cách nhau 8 mm; sát viền: 2 tem sát nhau). Chế độ cắt vào trong được tính như sát viền.</div>
     <label>Độ sai lệch cho phép (mm)<input type="number" id="tol" value="0.1" min="0.02" max="1" step="0.02"></label>
     <div class="note">Sai lệch càng lớn thì càng ít điểm, máy chạy càng nhanh. 0,1 mm là mức khuyên dùng.</div>
   </div>
@@ -568,7 +569,7 @@ function params() {
   const mode = document.querySelector('input[name=mode]:checked').value;
   const om = Math.max(0, n('offMm'));
   const p = {
-    off: mode === 'out' ? om : mode === 'in' ? -om : 0, tol: Math.max(0.02, n('tol')), shape: $('shape').value, join: Math.max(0, n('join')), srcDpi: n('srcDpi') || 300, forceW: n('forceW'),
+    off: Math.max($('shape').value === 'line' ? 0 : -1e9, mode === 'out' ? om : mode === 'in' ? -om : 0), tol: Math.max(0.02, n('tol')), shape: $('shape').value, join: Math.max(0, n('join')), srcDpi: n('srcDpi') || 300, forceW: n('forceW'),
     maxW: n('maxW') * 10, maxH: n('maxH') * 10, gap: Math.max(0, n('gap')), setGap: Math.max(0, n('setGap')), margin: Math.max(0, n('margin')),
     copies: Math.max(1, Math.round(n('copies'))), fill: $('fill').checked, group: $('group').checked, rot: $('rot').checked, optSec: n('optSec'),
     origin: $('origin').value, swap: $('swap').checked, mark: $('mark').checked, overcut: Math.max(0, n('overcut')),
@@ -595,6 +596,8 @@ $('machine').addEventListener('change', () => {
   [$('maxW').value, $('maxH').value] = SIZES[m];
   $('optHbc').hidden = m === 'tranh'; $('optTranh').hidden = m !== 'tranh'; $('spotBox').hidden = m === 'tranh'; $('spotModeBox').hidden = m === 'tranh'; $('corelBox').hidden = m === 'tranh';
 });
+const showLineNote = () => { $('lineNote').hidden = $('shape').value !== 'line'; };
+$('shape').addEventListener('change', showLineNote); showLineNote();
 
 // độ đục (0-255) từ đó điểm ảnh được tính là phần hình: 70% (người dùng chọn); vùng mờ hơn không tính vào đường cắt và kênh Spot1
 const ALPHA_MIN = 179;
@@ -662,7 +665,7 @@ async function buildGeometry(p) {
     for (let k = 0; k < N; k++) sdf[k] = (out[k] ? Math.sqrt(dO[k]) - 0.5 : 0.5 - Math.sqrt(dI[k])) * r;
     const F = new Float32Array(N);
     for (let k = 0; k < N; k++) F[k] = sdf[k] - p.off;
-    const jc = p.shape === 'rect' ? 0 : p.join / 2;
+    const jc = p.shape !== 'contour' ? 0 : p.join / 2;
     if (jc > 0) { // nối khe hẹp hơn p.join giữa 2 đoạn đường cắt của cùng 1 hình: phình jc rồi co lại jc
       const dA = new Float64Array(N);
       for (let k = 0; k < N; k++) dA[k] = sdf[k] <= p.off + jc ? 1e20 : 0;
@@ -681,8 +684,8 @@ async function buildGeometry(p) {
     }
     for (let k = 0; k < N; k++) if (!reach[k] && F[k] >= 0) F[k] = -0.5;
     const loops = [], o = new Uint8Array(gwc * ghc), occLim = Math.max(p.off, 0) + p.gap / 2;
-    if (p.shape === 'rect') {
-      // đường bế vuông: 1 hình chữ nhật bao toàn bộ hình, cách mép hình đúng khoảng bo
+    if (p.shape !== 'contour') {
+      // đường bế vuông (và chia vạch): 1 hình chữ nhật bao toàn bộ hình, cách mép hình đúng khoảng bo
       let x0 = gw, y0 = gh, x1 = -1, y1 = -1;
       for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) if (!out[y * gw + x]) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
       const X0 = (x0 - 0.5) * r - p.off, X1 = (x1 + 0.5) * r + p.off, Y0 = (y0 - 0.5) * r - p.off, Y1 = (y1 + 0.5) * r + p.off;
@@ -758,6 +761,7 @@ async function planLayout(G, p) {
   p.horiz = p.machine === 'tranh'; p.k0 = p.horiz ? 1 : 0;
   if (p.horiz) [Hc, Wc] = [Wc, Hc];
   p.Hbig = Wc * G.pres;
+  if (p.shape === 'line') return planRows(G, p);
   // tem cùng cỡ: thử xếp lưới (so le, xoay xen kẽ); luôn thử thêm xếp chèn khe; lấy cách ít tờ nhất, rồi khổ hẹp nhất
   const perSet = S.files.reduce((t, f) => t + (f.qty || 1), 0);
   const fits = c => c.sheets.every(s => s.W <= p.maxW + 0.5 && s.H <= p.maxH + 0.5); // không vượt khổ cho phép
@@ -952,6 +956,72 @@ async function groupPlans(G, p, Hc, Wc, one, sets, budget) {
   return cands;
 }
 // so 2 cách xếp: nhiều hình nhất (chế độ lấp đầy) → ít tờ nhất → tờ ngắn nhất theo chiều cấp liệu → diện tích nhỏ nhất
+/* ---------- chia vạch: tem xếp thành từng hàng, các ô chữ nhật sát nhau, bế bằng đường thẳng chung ---------- */
+function rectOf(f, k) { // khung cắt chữ nhật của file f khi xoay k, trong ô của file (mm)
+  const cs = f.loops[0].map(([u, v]) => rp(f, k, u, v)), xs = cs.map(c => c[0]), ys = cs.map(c => c[1]);
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+}
+async function planRows(G, p) {
+  const Hm = p.maxH - p.band - 2 * p.margin + 0.01, Wm = p.maxW - 2 * p.margin + 0.01;
+  const F = S.files.map((f, fi) => f.loops.length ? { fi, R: [0, 1].map(k => rectOf(f, k)) } : null);
+  const ok = F.filter(Boolean);
+  if (!ok.length) return null;
+  const kOf = (x, mode) => { const [a, b, c, d] = x.R[0], wide = c - a >= d - b; return mode === 0 ? 0 : mode === 1 ? (wide ? 0 : 1) : (wide ? 1 : 0); };
+  const inst = (x, mode) => { const k = kOf(x, mode), r = x.R[k]; return { fi: x.fi, k, r, w: r[2] - r[0], h: r[3] - r[1] }; };
+  const pack = (mode, Wl) => {
+    let list;
+    if (p.fill) { // lấp đầy: lặp các file cho tới khi đủ chỗ cho 1 tờ, phần thừa bỏ đi
+      const one = ok.map(x => inst(x, mode)), minA = Math.min(...one.map(u => u.w * u.h));
+      const n = Math.min(20000, Math.ceil(Wl * Hm / minA) + one.length);
+      list = Array.from({ length: n }, (_, i) => one[i % one.length]);
+    } else list = ok.flatMap(x => Array.from({ length: fileQty(S.files[x.fi], p) }, () => inst(x, mode)));
+    if (list.some(u => u.w > Wl || u.h > Hm)) return null;
+    list = list.map((u, i) => ({ ...u, i })).sort((u, v) => v.h - u.h || u.fi - v.fi || u.i - v.i);
+    const sheets = [];
+    const place = (u, loose) => {
+      for (const s of sheets) for (const sf of s) if (u.h <= sf.h + 1e-6 && (loose || u.h >= sf.h * 0.75) && sf.x + u.w <= Wl + 1e-6) { sf.cells.push([sf.x, u]); sf.x += u.w; return true; }
+      return false;
+    };
+    for (const u of list) {
+      if (place(u, false)) continue;
+      const s = sheets[sheets.length - 1], top = s ? s.reduce((t, sf) => t + sf.h, 0) : Infinity;
+      if (s && top + u.h <= Hm) { s.push({ y: top, h: u.h, x: u.w, cells: [[0, u]] }); continue; }
+      if (place(u, true)) continue;
+      if (p.fill && sheets.length) continue; // lấp đầy: chỉ 1 tờ
+      sheets.push([{ y: 0, h: u.h, x: u.w, cells: [[0, u]] }]);
+    }
+    const out = sheets.map(s => finishSheet(G, p, s.flatMap(sf => sf.cells.map(([x, u]) => {
+      const yt = sf.y + (sf.h - u.h) / 2; // tem nằm giữa hàng; ô cắt cao bằng cả hàng
+      return { fi: u.fi, k: u.k, bx: x - u.r[0], by: yt - u.r[1], cell: [x, sf.y, x + u.w, sf.y + sf.h] };
+    }))));
+    return { sheets: out, cap: out[0].items.length };
+  };
+  const cands = [];
+  for (const mode of p.rot ? [0, 1, 2] : [0]) {
+    const ws = new Set([Wm]);
+    for (const x of ok) { const w = inst(x, mode).w; for (let n = 1; n * w <= Wm && ws.size < 80; n++) ws.add(n * w + 1e-3); }
+    for (const Wl of ws) { const c = pack(mode, Wl); if (c) cands.push(c); }
+    await sleep();
+  }
+  if (!cands.length) return null;
+  return cands.sort(planOrder(p))[0];
+}
+// gộp cạnh các ô thành các đường thẳng: cạnh nằm trên cùng 1 đường và nối liền nhau thành 1 nét
+function gridLines(items) {
+  const Hz = new Map(), Vt = new Map(), rd = v => Math.round(v * 100) / 100;
+  const add = (M, c, a, b) => { const k = rd(c); if (!M.has(k)) M.set(k, []); M.get(k).push([Math.min(a, b), Math.max(a, b)]); };
+  for (const it of items) {
+    const xs = it.paths[0].map(q => q[0]), ys = it.paths[0].map(q => q[1]);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    add(Hz, y0, x0, x1); add(Hz, y1, x0, x1); add(Vt, x0, y0, y1); add(Vt, x1, y0, y1);
+  }
+  const merge = M => [...M].sort((a, b) => a[0] - b[0]).map(([c, iv]) => {
+    iv.sort((a, b) => a[0] - b[0]); const out = [];
+    for (const [a, b] of iv) { const l = out[out.length - 1]; if (l && a <= l[1] + 0.02) l[1] = Math.max(l[1], b); else out.push([a, b]); }
+    return [c, out];
+  });
+  return { h: merge(Hz), v: merge(Vt) };
+}
 const planOrder = p => (a, b) => {
   const cnt = c => c.sheets.reduce((t, s) => t + s.items.length, 0), len = c => c.sheets.reduce((t, s) => t + (p.horiz ? s.H : s.W), 0), area = c => c.sheets.reduce((t, s) => t + s.W * s.H, 0);
   return (p.fill ? cnt(b) - cnt(a) : 0) || a.sheets.length - b.sheets.length || len(a) - len(b) || area(a) - area(b);
@@ -1175,7 +1245,8 @@ function finishSheet(G, p, items) {
   const ext = (x, y) => { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; };
   for (const it of items) {
     const f = S.files[it.fi];
-    it.paths = f.loops.map(L => L.map(([u, v]) => { const [a, b] = rp(f, it.k, u, v); return [a + it.bx, b + it.by]; }));
+    const c = it.cell; // chia vạch: ô cắt cao bằng cả hàng
+    it.paths = c ? [[[c[0], c[1]], [c[0], c[3]], [c[2], c[3]], [c[2], c[1]]]] : f.loops.map(L => L.map(([u, v]) => { const [a, b] = rp(f, it.k, u, v); return [a + it.bx, b + it.by]; }));
     it.paths.forEach(L => L.forEach(([x, y]) => ext(x, y)));
     const cs = [[G.P, G.P], [G.P + f.w, G.P], [G.P, G.P + f.h], [G.P + f.w, G.P + f.h]].map(([u, v]) => rp(f, it.k, u, v));
     const xs = cs.map(c => c[0] + it.bx), ys = cs.map(c => c[1] + it.by);
@@ -1221,6 +1292,7 @@ function finishSheet(G, p, items) {
     sh.mf = [cb[0] - FL, cb[1] - F, cb[2] + FR, cb[3] + F]; // khung dấu (đường giữa nét)
     const m = pluginMarks(sh.mf, ys); sh.marks = m.rects; sh.tri = m.tri;
   } else sh.marks = marksOf(sh, p);
+  if (items.length && items.every(it => it.cell)) sh.grid = gridLines(items);
   return sh;
 }
 // Dấu định vị y như plugin máy HBC tự thêm trong CorelDRAW (đo từ file mẫu "file corel mau.cdr", đối tượng LMarkLine2 + DIR):
@@ -1297,6 +1369,24 @@ function cutPlan(sh, p) {
   const items = sh.items.filter(it => it.paths.length), n = items.length;
   const C = items.map(it => [(it.bb[0] + it.bb[2]) / 2, (it.bb[1] + it.bb[3]) / 2]);
   const dist = (u, v) => Math.hypot(u[0] - v[0], u[1] - v[1]);
+  if (sh.grid) { // chia vạch: cắt hết các đường theo chiều cấp tờ, rồi các đường còn lại; kiểu rắn bò bắt đầu từ phía gốc
+    const loops = []; let cur = O, travel = 0, cut = 0, pts = 0;
+    const go = (lines, hz) => {
+      const ax = hz ? 1 : 0, S2 = lines.flatMap(([c, iv]) => iv.map(([a, b]) => hz ? [[a, c], [b, c]] : [[c, a], [c, b]]));
+      if (!S2.length) return;
+      S2.sort((s, t) => s[0][ax] - t[0][ax] || s[0][1 - ax] - t[0][1 - ax]);
+      if (Math.abs(S2[S2.length - 1][0][ax] - cur[ax]) < Math.abs(S2[0][0][ax] - cur[ax])) S2.reverse();
+      for (const s of S2) {
+        const seg = dist(cur, s[1]) < dist(cur, s[0]) ? [s[1], s[0]] : s;
+        travel += dist(cur, seg[0]); cut += dist(seg[0], seg[1]); pts += 2; loops.push(seg); cur = seg[1];
+      }
+    };
+    const hzFirst = p.machine === 'tranh';
+    go(hzFirst ? sh.grid.h : sh.grid.v, hzFirst); go(hzFirst ? sh.grid.v : sh.grid.h, !hzFirst);
+    travel += dist(cur, O);
+    sh.plan = { loops, travel, cut, pts, open: true, key };
+    return sh.plan;
+  }
   // 1) rắn bò
   const horiz = p.machine === 'tranh', ax = horiz ? 1 : 0, run = 1 - ax;
   const sizes = items.map(it => it.bb[2 + ax] - it.bb[ax]).sort((u, v) => u - v);
@@ -1377,9 +1467,9 @@ function buildPLT(sh, p) {
   }
   out.push('SP1;');
   for (const L of plan.loops) {
-    const path = L.concat([L[0]]);
-    // cắt chồng: chạy tiếp một đoạn qua điểm đầu
-    let need = p.overcut;
+    const path = plan.open ? L.slice() : L.concat([L[0]]);
+    // cắt chồng: chạy tiếp một đoạn qua điểm đầu (đường thẳng chia vạch thì không)
+    let need = plan.open ? 0 : p.overcut;
     for (let i = 1; i < L.length && need > 1e-6; i++) {
       const a = path[path.length - 1], b = L[i], d = Math.hypot(b[0] - a[0], b[1] - a[1]);
       if (d <= need) { path.push(b); need -= d; } else { const t = need / d; path.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]); need = 0; }
@@ -1401,7 +1491,10 @@ const HBC_PAD = ' '.repeat(1025);
 function clipRing(R, a, b) { // cắt vòng kín R (toạ độ máy, mm) theo dải a ≤ X ≤ b → các đường hở/kín nằm trong dải
   const inside = q => q[0] >= a && q[0] <= b, k = R.findIndex(q => !inside(q));
   if (k < 0) return [R.concat([R[0]])];
-  const Q = R.slice(k).concat(R.slice(0, k), [R[k]]), out = []; let cur = null;
+  return clipOpen(R.slice(k).concat(R.slice(0, k), [R[k]]), a, b);
+}
+function clipOpen(Q, a, b) { // cắt đường hở Q theo dải a ≤ X ≤ b
+  const inside = q => q[0] >= a && q[0] <= b, out = []; let cur = null;
   for (let i = 0; i < Q.length - 1; i++) {
     const p0 = Q[i], p1 = Q[i + 1], dx = p1[0] - p0[0];
     let t0 = 0, t1 = 1;
@@ -1417,7 +1510,7 @@ function clipRing(R, a, b) { // cắt vòng kín R (toạ độ máy, mm) theo d
     if (t1 < 1) { out.push(cur); cur = null; }
   }
   if (cur) out.push(cur);
-  return out.filter(L => L.length > 1);
+  return out.filter(L => L.length > 1 && L.some(q => Math.abs(q[0] - L[0][0]) + Math.abs(q[1] - L[0][1]) > 1e-3)); // bỏ mẩu chỉ chạm mép dải
 }
 function buildHBC(sh, p) {
   const plan = cutPlan(sh, { ...p, origin: 'br', dotE: 0 }); // thứ tự cắt bắt đầu từ phía gốc (dưới phải)
@@ -1430,7 +1523,7 @@ function buildHBC(sh, p) {
     const a = k * seg, b = (k + 1) * seg;
     if (k) out += HBC_PAD;
     out += 'TB25;' + u(seg) + ',' + u(fw) + ';CT1;' + HBC_PAD + 'IN;IN;IN;PA;';
-    for (const L of loops) for (const pl of clipRing(L, a, b)) {
+    for (const L of loops) for (const pl of plan.open ? clipOpen(L, a, b) : clipRing(L, a, b)) {
       const q = pl.map(([X, Y]) => [u(X - a), u(Y)]);
       out += 'PU' + q[0][0] + ',' + q[0][1] + ';';
       for (let i = 0; i < q.length; i++) out += 'PD' + q[i][0] + ',' + q[i][1] + ';';
@@ -1460,7 +1553,7 @@ function buildDXF(sh, p, corel) {
   for (const [x, y] of dots) o.push('0', 'CIRCLE', '8', 'DINH_VI', '10', f(x), '20', f(y), '30', '0.0', '40', f(R));
   for (const [[x0, y0], [x1, y1]] of segs) o.push('0', 'LINE', '8', 'DINH_VI', '10', f(x0), '20', f(y0), '30', '0.0', '11', f(x1), '21', f(y1), '31', '0.0');
   for (const L of plan.loops) {
-    o.push('0', 'POLYLINE', '8', 'CUT', '66', '1', '10', '0.0', '20', '0.0', '30', '0.0', '70', '1');
+    o.push('0', 'POLYLINE', '8', 'CUT', '66', '1', '10', '0.0', '20', '0.0', '30', '0.0', '70', plan.open ? '0' : '1');
     for (const [x, y] of L) { const [X, Y] = tr(x, y); o.push('0', 'VERTEX', '8', 'CUT', '10', f(X), '20', f(Y), '30', '0.0'); }
     o.push('0', 'SEQEND', '8', 'CUT');
   }
@@ -1746,7 +1839,8 @@ function draw() {
   ctx.setTransform(k, 0, 0, k, 0, 0);
   ctx.strokeStyle = '#e0157a'; ctx.lineWidth = Math.max(0.25, 1.2 / k); ctx.lineJoin = 'round';
   ctx.beginPath();
-  for (const it of sh.items) for (const L of it.paths) { ctx.moveTo(L[0][0], L[0][1]); for (let i = 1; i < L.length; i++) ctx.lineTo(L[i][0], L[i][1]); ctx.closePath(); }
+  if (sh.grid) for (const L of cutPlan(sh, p).loops) { ctx.moveTo(L[0][0], L[0][1]); ctx.lineTo(L[1][0], L[1][1]); }
+  else for (const it of sh.items) for (const L of it.paths) { ctx.moveTo(L[0][0], L[0][1]); for (let i = 1; i < L.length; i++) ctx.lineTo(L[i][0], L[i][1]); ctx.closePath(); }
   ctx.stroke();
   // dấu gốc
   const ox = p.origin[1] === 'r' ? sh.W - p.dotE : p.dotE, oy = p.origin[0] === 'b' ? sh.H - p.dotE : p.dotE;
@@ -1824,6 +1918,7 @@ async function run(force, retried) {
   else if (again) run(true, true);
 }
 function overlapMm2(sh) {
+  if (sh.grid) return 0; // chia vạch: mỗi tem nằm trong ô riêng, các ô chỉ chung cạnh nên không thể chồng nhau
   const W = Math.ceil(sh.W), H = Math.ceil(sh.H), used = new Uint8Array(W * H), G = S.geo;
   const cx = new OffscreenCanvas(W, H).getContext('2d', { willReadFrequently: true });
   let bad = 0;
