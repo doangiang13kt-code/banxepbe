@@ -171,8 +171,8 @@ button:disabled{opacity:.5;cursor:not-allowed}
     </div>
     </div>
     <div class="sec" id="corelBox" style="padding:0;border:0">
-      <label>Chiều dài tối đa mỗi đoạn cắt (mm)<input type="number" id="hbcSeg" value="600" min="100" max="2000" step="10"></label>
-      <div class="note">File .plt chia khung thành các đoạn bằng nhau, mỗi đoạn không quá số này (file mẫu của plugin: khung 1049 mm → 2 đoạn).</div>
+      <label>Chiều dài mỗi đoạn cắt (mm)<input type="number" id="hbcSeg" value="600" min="100" max="2000" step="10"></label>
+      <div class="note">Như plugin: khung chia thành số đoạn bằng nhau gần nhất với số này (khung 1210 mm → 2 đoạn × 605 mm). Mỗi chỗ chia có 1 cặp chữ T để máy tìm dấu cắt tiếp.</div>
       <label>Địa chỉ máy cắt (trạm Corel)<input type="text" id="corelAddr" placeholder="192.168.x.x:8687" style="width:150px;font-family:var(--f-mono)"></label>
       <button id="btnCorel" disabled>Gửi sang Corel máy cắt</button>
       <div class="note" id="corelNote">Máy cắt mở "CHAY TRAM COREL.bat". Corel ở máy cắt tự dựng file có hình in + đường cắt. Lưu ý: dấu trên TIF cách đường cắt 10 mm, còn plugin HBC tự đặt dấu cách 20 mm, nên cắt tờ in từ TIF thì dùng file .plt của app, đừng thêm dấu bằng plugin.</div>
@@ -1204,7 +1204,11 @@ function finishSheet(G, p, items) {
   }
   if (hbcMarks) {
     // chữ T giữa luôn đủ cỡ (nhánh ngang 20 mm) cho máy đọc: hình nằm ngang tầm chữ T thì đẩy đường dấu cạnh đó ra xa hơn, tờ rộng thêm
-    const F = PLUGIN.F, yc = (cb[1] + cb[3]) / 2, near = it => it.bb[1] < yc + PLUGIN.T / 2 + 1 && it.bb[3] > yc - PLUGIN.T / 2 - 1;
+    // máy cắt từng đoạn và tìm chữ T ở mỗi chỗ chia đoạn (như plugin): đặt 1 cặp chữ T tại mỗi chỗ chia, cùng cách chia với file .plt
+    const F = PLUGIN.F, fl = cb[3] - cb[1] + 2 * F, ns = hbcSegs(fl, p), ys = [];
+    for (let k = 1; k < ns; k++) ys.push(cb[3] + F - k * fl / ns);
+    if (!ys.length) ys.push((cb[1] + cb[3]) / 2); // tờ ngắn 1 đoạn: vẫn giữ chữ T ở giữa
+    const near = it => ys.some(yc => it.bb[1] < yc + PLUGIN.T / 2 + 1 && it.bb[3] > yc - PLUGIN.T / 2 - 1);
     let FL = F, FR = F;
     for (const it of items) if (near(it)) { FL = Math.max(FL, cb[0] + PLUGIN.ARM + 1 - it.bb[0]); FR = Math.max(FR, it.bb[2] + 1 + PLUGIN.ARM - cb[2]); }
     FL = Math.ceil(FL * 2) / 2; FR = Math.ceil(FR * 2) / 2;
@@ -1215,7 +1219,7 @@ function finishSheet(G, p, items) {
     }
     cb[0] += sx; cb[2] += sx; sh.W += sx + FR - F;
     sh.mf = [cb[0] - FL, cb[1] - F, cb[2] + FR, cb[3] + F]; // khung dấu (đường giữa nét)
-    const m = pluginMarks(sh.mf); sh.marks = m.rects; sh.tri = m.tri;
+    const m = pluginMarks(sh.mf, ys); sh.marks = m.rects; sh.tri = m.tri;
   } else sh.marks = marksOf(sh, p);
   return sh;
 }
@@ -1224,17 +1228,21 @@ function finishSheet(G, p, items) {
 // tam giác DIR ở giữa phía trên. Plugin đặt góc dấu cách khung đường cắt 20 mm; theo yêu cầu người dùng app đặt 10 mm (F), giữ nguyên cỡ dấu.
 const PLUGIN = { F: 10, ARM: 20, T: 1, MID: 40, triBase: 8.75, triTip: 12.5, triHalf: 2.165 };
 // [X0, Y0, X1, Y1] = khung dấu (đường giữa nét); mọi nhánh luôn đủ cỡ chuẩn, không rút ngắn
-function pluginMarks([X0, Y0, X1, Y1]) {
-  const L = PLUGIN.ARM, h = PLUGIN.T / 2, yc = (Y0 + Y1) / 2, xc = (X0 + X1) / 2, M = PLUGIN.MID / 2, F = PLUGIN.F;
+// số đoạn cắt của khung dài fl mm: các đoạn bằng nhau, mỗi đoạn ≤ ô "Chiều dài tối đa mỗi đoạn cắt"
+// (khớp 3 file plugin: khung 672,5 mm → 1 đoạn; 1049 mm → 2; 1210 mm → 2 đoạn × 605 mm, nên là làm tròn, không phải "không quá")
+const hbcSegs = (fl, p) => Math.max(1, Math.round(fl / Math.max(50, p.hbcSeg || 600)));
+function pluginMarks([X0, Y0, X1, Y1], ys) {
+  const L = PLUGIN.ARM, h = PLUGIN.T / 2, xc = (X0 + X1) / 2, M = PLUGIN.MID / 2, F = PLUGIN.F;
   const rects = [
     // góc trên trái / trên phải / dưới trái / dưới phải: nhánh ngang + nhánh dọc (phủ cả ô góc như nối góc vuông)
     [X0 - h, Y0 - h, X0 + L, Y0 + h], [X0 - h, Y0 - h, X0 + h, Y0 + L],
     [X1 - L, Y0 - h, X1 + h, Y0 + h], [X1 - h, Y0 - h, X1 + h, Y0 + L],
     [X0 - h, Y1 - h, X0 + L, Y1 + h], [X0 - h, Y1 - L, X0 + h, Y1 + h],
     [X1 - L, Y1 - h, X1 + h, Y1 + h], [X1 - h, Y1 - L, X1 + h, Y1 + h],
-    // chữ T giữa 2 cạnh bên: nét dọc 40 mm, nét ngang 20 mm vào trong
-    [X0 - h, yc - M, X0 + h, yc + M], [X0, yc - h, X0 + L, yc + h],
-    [X1 - h, yc - M, X1 + h, yc + M], [X1 - L, yc - h, X1, yc + h]];
+    // chữ T ở 2 cạnh bên tại mỗi chỗ chia đoạn: nét dọc 40 mm, nét ngang 20 mm vào trong
+    ...ys.flatMap(yc => [
+      [X0 - h, yc - M, X0 + h, yc + M], [X0, yc - h, X0 + L, yc + h],
+      [X1 - h, yc - M, X1 + h, yc + M], [X1 - L, yc - h, X1, yc + h]])];
   const y0 = Y0 + F, tri = [[xc, y0 - PLUGIN.triTip], [xc - PLUGIN.triHalf, y0 - PLUGIN.triBase], [xc + PLUGIN.triHalf, y0 - PLUGIN.triBase]];
   return { rects, tri };
 }
@@ -1386,7 +1394,7 @@ function buildPLT(sh, p) {
 
 /* ---------- PLT chuẩn plugin máy HBC (đối chiếu từ file "test.plt" do plugin xuất) ---------- */
 // Gốc (0,0) = góc dưới phải của khung dấu (khung đường cắt nới 20 mm); X chạy dọc tờ từ dưới lên, Y chạy ngang từ phải sang trái; 40 đơn vị/mm.
-// Khung được chia thành n đoạn bằng nhau theo chiều X (mỗi đoạn ≤ p.hbcSeg mm); mỗi đoạn là 1 khối:
+// Khung được chia thành n đoạn bằng nhau theo chiều X (n = làm tròn khung / p.hbcSeg); mỗi đoạn là 1 khối:
 //   TB25;<dài đoạn>,<rộng khung>;CT1;<1025 dấu cách>IN;IN;IN;PA; … PU<dài+5mm>,<5mm>;!PG;
 // đường cắt vắt qua chỗ chia được cắt thành từng phần trong mỗi khối; đường nằm trọn trong khối là vòng kín.
 const HBC_PAD = ' '.repeat(1025);
@@ -1415,7 +1423,7 @@ function buildHBC(sh, p) {
   const plan = cutPlan(sh, { ...p, origin: 'br', dotE: 0 }); // thứ tự cắt bắt đầu từ phía gốc (dưới phải)
   const mf = sh.mf || [sh.cut[0] - PLUGIN.F, sh.cut[1] - PLUGIN.F, sh.cut[2] + PLUGIN.F, sh.cut[3] + PLUGIN.F];
   const fx1 = mf[2], fy1 = mf[3], fl = mf[3] - mf[1], fw = mf[2] - mf[0]; // gốc góc dưới phải khung dấu; dài (theo X máy) × rộng khung
-  const n = Math.max(1, Math.ceil(fl / Math.max(50, p.hbcSeg) - 1e-9)), seg = fl / n, u = v => Math.round(v * 40);
+  const n = hbcSegs(fl, p), seg = fl / n, u = v => Math.round(v * 40); // cùng cách chia với chữ T trên tờ in
   const loops = plan.loops.map(L => L.map(([x, y]) => [fy1 - y, fx1 - x])); // toạ độ máy, mm
   let out = 'CR;', pts = 0;
   for (let k = 0; k < n; k++) {
