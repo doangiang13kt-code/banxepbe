@@ -663,9 +663,35 @@ function aiStrip(pdf, cuts) {
 async function aiInfo(file) {
   const pdf = await pdfOpen(await file.arrayBuffer()), { cuts, how, box, imgDpi } = await aiScan(pdf);
   const [x0, y0, x1, y1] = box, k = 25.4 / 72;
-  const loops = [];
-  for (const st of cuts) for (const q of st.subs) if (q.length >= 3) loops.push(q.map(([x, y]) => [(x - x0) * k, (y1 - y) * k]));
-  return { w: x1 - x0, h: y1 - y0, dpi: 72, ai: { bytes: aiStrip(pdf, cuts), box, loops, how, imgDpi, wmm: (x1 - x0) * k } };
+  const loops = [], pt = [];
+  for (const st of cuts) for (const q of st.subs) if (q.length >= 3) { pt.push(q); loops.push(q.map(([x, y]) => [(x - x0) * k, (y1 - y) * k])); }
+  return { w: x1 - x0, h: y1 - y0, dpi: 72, ai: { bytes: aiStrip(pdf, cuts), box, loops, pt, how, imgDpi, wmm: (x1 - x0) * k } };
+}
+const inPoly = (L, x, y) => { let c = false; for (let i = 0, j = L.length - 1; i < L.length; j = i++) if ((L[i][1] > y) !== (L[j][1] > y) && x < (L[j][0] - L[i][0]) * (y - L[i][1]) / (L[j][1] - L[i][1]) + L[i][0]) c = !c; return c; };
+// file có nhiều hình, mỗi hình có đường bo riêng: tách thành từng hình rời để xếp riêng.
+// Chỉ tách khi các đường bo ngoài cùng bao kín gần hết phần hình (≥ 98%); file chỉ có nét cắt bên trong hình thì giữ nguyên 1 hình
+async function aiSplit(ai) {
+  const L = ai.pt, A = L.map(q => Math.abs(area(q)));
+  const top = L.map((q, i) => !L.some((o, j) => j !== i && A[j] > A[i] && inPoly(o, q[0][0], q[0][1])));
+  const tops = L.filter((_, i) => top[i]);
+  if (tops.length < 2) return null;
+  const [x0, , , y1] = ai.box, ppm = 2, k = ppm * 25.4 / 72; // kiểm tra trên bản nhỏ 2 điểm/mm
+  const bmp = await aiRender({ ai: { pdf: ai, box: ai.box } }, ppm), W = bmp.width, H = bmp.height;
+  const c = new OffscreenCanvas(W, H), x = c.getContext('2d', { willReadFrequently: true });
+  x.drawImage(bmp, 0, 0); const art = x.getImageData(0, 0, W, H).data;
+  x.clearRect(0, 0, W, H); x.fillStyle = '#000';
+  for (const q of tops) { x.beginPath(); q.forEach(([a, b], j) => j ? x.lineTo((a - x0) * k, (y1 - b) * k) : x.moveTo((a - x0) * k, (y1 - b) * k)); x.closePath(); x.fill(); }
+  const cut = x.getImageData(0, 0, W, H).data;
+  let all = 0, inside = 0;
+  for (let j = 3; j < art.length; j += 4) if (art[j] >= ALPHA_MIN) { all++; if (cut[j] > 0) inside++; }
+  if (all && inside < 0.98 * all) return null;
+  const mm = 25.4 / 72;
+  return tops.map(T => {
+    const kids = L.filter((q, i) => !top[i] && inPoly(T, q[0][0], q[0][1])), own = [T, ...kids];
+    let bx0 = 1e9, by0 = 1e9, bx1 = -1e9, by1 = -1e9;
+    for (const [a, b] of T) { bx0 = Math.min(bx0, a); by0 = Math.min(by0, b); bx1 = Math.max(bx1, a); by1 = Math.max(by1, b); }
+    return { w: bx1 - bx0, h: by1 - by0, ai: { pdf: ai, bytes: ai.bytes, box: [bx0, by0, bx1, by1], clip: T, pt: own, loops: own.map(q => q.map(([a, b]) => [(a - bx0) * mm, (by1 - b) * mm])), how: ai.how, imgDpi: ai.imgDpi, wmm: (bx1 - bx0) * mm } };
+  });
 }
 let pdfjsP = null;
 const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
@@ -678,8 +704,9 @@ const loadPdfjs = () => pdfjsP || (pdfjsP = new Promise((ok, no) => {
 // dựng hình in của file AI (đã ẩn nét cắt), cắt đúng khung, nền trong suốt, ppm điểm ảnh mỗi mm
 async function aiRender(f, ppm) {
   const lib = await loadPdfjs();
-  if (!f.ai.doc) f.ai.doc = await lib.getDocument({ data: f.ai.bytes.slice(), isEvalSupported: false }).promise;
-  const page = await f.ai.doc.getPage(1), vb = page.view, [x0, , x1, y1] = f.ai.box;
+  const hd = f.ai.pdf || f.ai; // các hình tách từ 1 file dùng chung 1 tài liệu
+  if (!hd.doc) hd.doc = await lib.getDocument({ data: hd.bytes.slice(), isEvalSupported: false }).promise;
+  const page = await hd.doc.getPage(1), vb = page.view, [x0, , x1, y1] = f.ai.box;
   let sc = ppm * 25.4 / 72;
   const bw = x1 - x0, bh = f.ai.box[3] - f.ai.box[1];
   sc = Math.min(sc, 16000 / bw, 16000 / bh, Math.sqrt(120e6 / (bw * bh))); // giới hạn khung vẽ của trình duyệt
@@ -688,6 +715,11 @@ async function aiRender(f, ppm) {
   const vp = page.getViewport({ scale: sc, offsetX: -(x0 - vb[0]) * sc, offsetY: -(vb[3] - y1) * sc });
   const ctx = cv.getContext('2d');
   await page.render({ canvasContext: ctx, viewport: vp, background: 'rgba(0,0,0,0)', intent: 'print' }).promise;
+  if (f.ai.clip) { // hình tách rời: bỏ phần hình của hình bên cạnh lọt vào khung
+    ctx.globalCompositeOperation = 'destination-in'; ctx.beginPath();
+    f.ai.clip.forEach(([a, b], j) => j ? ctx.lineTo((a - x0) * sc, (y1 - b) * sc) : ctx.moveTo((a - x0) * sc, (y1 - b) * sc));
+    ctx.closePath(); ctx.fill(); ctx.globalCompositeOperation = 'source-over';
+  }
   // ảnh nền trắng (không trong suốt): phần trắng nối ra mép khung coi là nền → trong suốt, để đường bo ôm sát hình.
   // Tìm trên bản nhỏ ~4 điểm/mm rồi xoá phóng lên: nền trắng không in mực nên mép mềm không ảnh hưởng bản in
   const k4 = Math.min(1, 4 / (sc * 72 / 25.4)), w4 = Math.max(1, Math.round(W * k4)), h4 = Math.max(1, Math.round(H * k4));
@@ -730,8 +762,14 @@ async function setFiles(list, folder, dir) {
     try {
       const tif = isTif(f.name), i = isAi(f.name) ? await aiInfo(f) : tif ? await tiffInfo(f) : await pngInfo(f);
       const kt = f.name.match(/_KT(DOC|NGANG)\s*(\d+(?:[.,]\d+)?)\s*cm/i); // _KTDOC120cm / _KTNGANG60cm
-      S.files.push({ file: f, name: f.name, tif, ai: i.ai || null, hasSpot: !!i.spot, qty: qtyOf(f.name), pw: i.w, ph: i.h, dpi: i.dpi || f._dpi || 0,
-        kt: kt ? { dir: kt[1].toUpperCase(), mm: parseFloat(kt[2].replace(',', '.')) * 10 } : null });
+      const ktv = kt ? { dir: kt[1].toUpperCase(), mm: parseFloat(kt[2].replace(',', '.')) * 10 } : null;
+      const parts = i.ai ? await aiSplit(i.ai) : null;
+      if (parts) {
+        const ktK = ktv ? ktv.mm / ((ktv.dir === 'DOC' ? i.h : i.w) * 25.4 / 72) : 0;
+        parts.forEach((q, n) => S.files.push({ file: f, name: f.name + ' · hình ' + (n + 1) + '/' + parts.length, piece: n + 1, ktK, tif: false, ai: q.ai, hasSpot: false, qty: qtyOf(f.name), pw: q.w, ph: q.h, dpi: 72, kt: null }));
+        continue;
+      }
+      S.files.push({ file: f, name: f.name, tif, ai: i.ai || null, hasSpot: !!i.spot, qty: qtyOf(f.name), pw: i.w, ph: i.h, dpi: i.dpi || f._dpi || 0, kt: ktv });
     }
     catch (e) { log('Bỏ qua ' + f.name + ': ' + e.message, 'warn'); }
   }
@@ -921,7 +959,8 @@ async function buildGeometry(p) {
     if (f.ovW) { f.w = f.ovW; f.h = f.ovW * f.ph / f.pw; } // kích thước sửa trên app được ưu tiên nhất
     else if (f.kt) { // tên file quy định: _KTDOC = chiều dọc, _KTNGANG = chiều ngang; cạnh kia theo tỉ lệ hình
       if (f.kt.dir === 'DOC') { f.h = f.kt.mm; f.w = f.kt.mm * f.pw / f.ph; } else { f.w = f.kt.mm; f.h = f.kt.mm * f.ph / f.pw; }
-    } else if (p.forceW > 0) { f.h = f.h * p.forceW / f.w; f.w = p.forceW; }
+    } else if (f.piece) { if (f.ktK) { f.w *= f.ktK; f.h *= f.ktK; } }
+    else if (p.forceW > 0) { f.h = f.h * p.forceW / f.w; f.w = p.forceW; }
   }
   const w = Math.max(...S.files.map(f => f.w)), h = Math.max(...S.files.map(f => f.h));
   const q = p.gap / 2 + 1 + p.join / 2, P = Math.max(p.off, 0) + q; // ô rộng thêm để phép nối khe không chạm mép lưới
@@ -932,7 +971,7 @@ async function buildGeometry(p) {
   const jobs = S.files.map(f => {
     const gwc = Math.ceil((f.w + 2 * P) / pres), ghc = Math.ceil((f.h + 2 * P) / pres), gw = gwc * fk, gh = ghc * fk;
     const bw = Math.max(1, Math.round(f.w / r)), bh = Math.max(1, Math.round(f.h / r));
-    const key = [bw, bh, gw, gh, P, r, p.off, p.gap, p.join, p.shape, p.tol, ALPHA_MIN].join();
+    const key = [f.piece || 0, bw, bh, gw, gh, P, r, p.off, p.gap, p.join, p.shape, p.tol, ALPHA_MIN].join();
     const memo = f.file && GEO.get(f.file), hit = memo && memo.get(key);
     const bmp = hit ? null : (async () => createImageBitmap(await sourceOf(f), { resizeWidth: bw, resizeHeight: bh, resizeQuality: 'high' }))();
     if (bmp) bmp.catch(() => { }); // lỗi được báo khi chờ bên dưới
@@ -1101,7 +1140,7 @@ async function planLayout(G, p) {
   // tem cùng cỡ: thử xếp lưới (so le, xoay xen kẽ); luôn thử thêm xếp chèn khe; lấy cách ít tờ nhất, rồi khổ hẹp nhất
   const perSet = S.files.reduce((t, f) => t + (f.qty || 1), 0);
   const fits = c => c.sheets.every(s => s.W <= p.maxW + 0.5 && s.H <= p.maxH + 0.5); // không vượt khổ cho phép
-  if (p.group && perSet > 1 && (p.fill || setCount(p) > 1)) { const g = await planGroups(G, p, Hc, Wc); if (g && fits(g)) return g; }
+  if (p.group && !S.files.some(f => f.piece) && perSet > 1 && (p.fill || setCount(p) > 1)) { const g = await planGroups(G, p, Hc, Wc); if (g && fits(g)) return g; }
   const cands = [G.same ? planLattice(G, p, Hc, Wc) : null, G.same ? await planLattice2(G, p, Hc, Wc) : null, await planGreedy(G, p, Hc, Wc)].filter(Boolean);
   if (!cands.length) return null;
   const ok = cands.filter(fits);
