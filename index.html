@@ -674,23 +674,65 @@ async function aiSplit(ai) {
   const L = ai.pt, A = L.map(q => Math.abs(area(q)));
   const top = L.map((q, i) => !L.some((o, j) => j !== i && A[j] > A[i] && inPoly(o, q[0][0], q[0][1])));
   const tops = L.filter((_, i) => top[i]);
-  if (tops.length < 2) return null;
   const [x0, , , y1] = ai.box, ppm = 2, k = ppm * 25.4 / 72; // kiểm tra trên bản nhỏ 2 điểm/mm
-  const bmp = await aiRender({ ai: { pdf: ai, box: ai.box } }, ppm), W = bmp.width, H = bmp.height;
+  const tmp = { ai: { pdf: ai, box: ai.box } }, bmp = await aiRender(tmp, ppm), W = bmp.width, H = bmp.height;
   const c = new OffscreenCanvas(W, H), x = c.getContext('2d', { willReadFrequently: true });
   x.drawImage(bmp, 0, 0); const art = x.getImageData(0, 0, W, H).data;
-  x.clearRect(0, 0, W, H); x.fillStyle = '#000';
-  for (const q of tops) { x.beginPath(); q.forEach(([a, b], j) => j ? x.lineTo((a - x0) * k, (y1 - b) * k) : x.moveTo((a - x0) * k, (y1 - b) * k)); x.closePath(); x.fill(); }
-  const cut = x.getImageData(0, 0, W, H).data;
-  let all = 0, inside = 0;
-  for (let j = 3; j < art.length; j += 4) if (art[j] >= ALPHA_MIN) { all++; if (cut[j] > 0) inside++; }
-  if (all && inside < 0.98 * all) return null;
+  const filled = list => { x.clearRect(0, 0, W, H); x.fillStyle = '#000'; for (const q of list) { x.beginPath(); q.forEach(([a, b], j) => j ? x.lineTo((a - x0) * k, (y1 - b) * k) : x.moveTo((a - x0) * k, (y1 - b) * k)); x.closePath(); x.fill(); } return x.getImageData(0, 0, W, H).data; };
+  let covered = false;
+  if (tops.length >= 2) {
+    const cut = filled(tops);
+    let all = 0, inside = 0;
+    for (let j = 3; j < art.length; j += 4) if (art[j] >= ALPHA_MIN) { all++; if (cut[j] > 0) inside++; }
+    covered = !all || inside >= 0.98 * all;
+  }
+  // chưa có đường bo ngoài: các hình nằm xa nhau (đường bo app tạo không dính nhau) thì tách thành từng hình
+  if (!covered) return aiBlobs(ai, art, filled(L), W, H, k, ppm, tmp.ai.whiteBg);
   const mm = 25.4 / 72;
   return tops.map(T => {
     const kids = L.filter((q, i) => !top[i] && inPoly(T, q[0][0], q[0][1])), own = [T, ...kids];
     let bx0 = 1e9, by0 = 1e9, bx1 = -1e9, by1 = -1e9;
     for (const [a, b] of T) { bx0 = Math.min(bx0, a); by0 = Math.min(by0, b); bx1 = Math.max(bx1, a); by1 = Math.max(by1, b); }
     return { w: bx1 - bx0, h: by1 - by0, ai: { pdf: ai, bytes: ai.bytes, box: [bx0, by0, bx1, by1], clip: T, pt: own, loops: own.map(q => q.map(([a, b]) => [(a - bx0) * mm, (by1 - b) * mm])), how: ai.how, imgDpi: ai.imgDpi, wmm: (bx1 - bx0) * mm } };
+  });
+}
+function aiBlobs(ai, art, cut, W, H, k, ppm, whiteBg) {
+  const p = params(), R = Math.max(3, p.off + p.join / 2) * ppm, N = W * H, m = new Uint8Array(N); // R: nửa khe tối thiểu để 2 đường bo không nối nhau
+  let tot = 0;
+  for (let j = 0; j < N; j++) if (art[j * 4 + 3] >= ALPHA_MIN || cut[j * 4 + 3] > 0) { m[j] = 1; tot++; }
+  if (!tot) return null;
+  const D = new Float64Array(N); for (let j = 0; j < N; j++) D[j] = m[j] ? 0 : 1e20;
+  edt(D, W, H);
+  const lim = R * R, lab = new Int32Array(N).fill(-1), comps = [];
+  for (let s0 = 0; s0 < N; s0++) {
+    if (lab[s0] >= 0 || D[s0] > lim) continue;
+    const id = comps.length, c = { n: 0, x0: W, y0: H, x1: -1, y1: -1 }, st = [s0]; lab[s0] = id;
+    while (st.length) {
+      const j = st.pop(), px = j % W, py = (j / W) | 0;
+      if (m[j]) { c.n++; if (px < c.x0) c.x0 = px; if (px > c.x1) c.x1 = px; if (py < c.y0) c.y0 = py; if (py > c.y1) c.y1 = py; }
+      for (const q of [px > 0 ? j - 1 : -1, px < W - 1 ? j + 1 : -1, py > 0 ? j - W : -1, py < H - 1 ? j + W : -1]) if (q >= 0 && lab[q] < 0 && D[q] <= lim) { lab[q] = id; st.push(q); }
+    }
+    comps.push(c);
+  }
+  // mảnh nhỏ (< 2% phần hình, như chấm màu bắn ra) nhập vào hình lớn gần nhất
+  const big = comps.map((c, i) => c.n >= 0.02 * tot ? i : -1).filter(i => i >= 0);
+  if (big.length < 2) return null;
+  const owner = comps.map((c, i) => {
+    if (big.includes(i) || !c.n) return big.includes(i) ? i : -1;
+    const cx = (c.x0 + c.x1) / 2, cy = (c.y0 + c.y1) / 2; let b = big[0], bd = Infinity;
+    for (const g of big) { const C = comps[g], dx = Math.max(C.x0 - cx, 0, cx - C.x1), dy = Math.max(C.y0 - cy, 0, cy - C.y1); if (dx * dx + dy * dy < bd) { bd = dx * dx + dy * dy; b = g; } }
+    return b;
+  });
+  comps.forEach((c, i) => { const g = owner[i]; if (g >= 0 && g !== i && c.n) { const C = comps[g]; C.x0 = Math.min(C.x0, c.x0); C.y0 = Math.min(C.y0, c.y0); C.x1 = Math.max(C.x1, c.x1); C.y1 = Math.max(C.y1, c.y1); } });
+  const [ax0, , , ay1] = ai.box, mm = 25.4 / 72;
+  return big.map(g => {
+    const C = comps[g], qx0 = Math.max(0, C.x0 - 1), qy0 = Math.max(0, C.y0 - 1), qx1 = Math.min(W, C.x1 + 2), qy1 = Math.min(H, C.y1 + 2);
+    const box = [ax0 + qx0 / k, ay1 - qy1 / k, ax0 + qx1 / k, ay1 - qy0 / k];
+    const mw = qx1 - qx0, mh = qy1 - qy0, mask = new OffscreenCanvas(mw, mh), mx = mask.getContext('2d'), id = mx.createImageData(mw, mh);
+    for (let y = 0; y < mh; y++) for (let xx = 0; xx < mw; xx++) { const l = lab[(y + qy0) * W + xx + qx0]; if (l >= 0 && owner[l] === g) id.data[(y * mw + xx) * 4 + 3] = 255; }
+    mx.putImageData(id, 0, 0);
+    const own = ai.pt.filter(q => { const px = Math.min(W - 1, Math.max(0, Math.round((q[0][0] - ax0) * k))), py = Math.min(H - 1, Math.max(0, Math.round((ay1 - q[0][1]) * k))), l = lab[py * W + px]; return l >= 0 && owner[l] === g; });
+    return { w: box[2] - box[0], h: box[3] - box[1], ai: { pdf: ai, bytes: ai.bytes, box, mask, forceBg: whiteBg, pt: own, loops: own.map(q => q.map(([a, b]) => [(a - box[0]) * mm, (box[3] - b) * mm])), how: ai.how, imgDpi: ai.imgDpi, wmm: (box[2] - box[0]) * mm } };
   });
 }
 let pdfjsP = null;
@@ -715,6 +757,7 @@ async function aiRender(f, ppm) {
   const vp = page.getViewport({ scale: sc, offsetX: -(x0 - vb[0]) * sc, offsetY: -(vb[3] - y1) * sc });
   const ctx = cv.getContext('2d');
   await page.render({ canvasContext: ctx, viewport: vp, background: 'rgba(0,0,0,0)', intent: 'print' }).promise;
+  if (f.ai.mask) { ctx.globalCompositeOperation = 'destination-in'; ctx.drawImage(f.ai.mask, 0, 0, W, H); ctx.globalCompositeOperation = 'source-over'; }
   if (f.ai.clip) { // hình tách rời: bỏ phần hình của hình bên cạnh lọt vào khung
     ctx.globalCompositeOperation = 'destination-in'; ctx.beginPath();
     f.ai.clip.forEach(([a, b], j) => j ? ctx.lineTo((a - x0) * sc, (y1 - b) * sc) : ctx.moveTo((a - x0) * sc, (y1 - b) * sc));
@@ -730,7 +773,7 @@ async function aiRender(f, ppm) {
   let n = 0, wt = 0;
   for (let x = 0; x < w4; x++) for (const y of [0, h4 - 1]) { n++; if (white(y * w4 + x)) wt++; }
   for (let y = 0; y < h4; y++) for (const x of [0, w4 - 1]) { n++; if (white(y * w4 + x)) wt++; }
-  f.ai.whiteBg = wt >= 0.6 * n;
+  f.ai.whiteBg = f.ai.forceBg != null ? f.ai.forceBg : wt >= 0.6 * n; // hình tách từ ảnh nền trắng: theo cả file
   if (f.ai.whiteBg) {
     const bg = new Uint8Array(w4 * h4), st = [];
     for (let x = 0; x < w4; x++) st.push(x, (h4 - 1) * w4 + x);
