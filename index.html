@@ -108,7 +108,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
     </div>
     <input type="file" id="inDir" webkitdirectory directory multiple hidden>
     <div class="drop" id="drop">hoặc kéo thả thư mục vào đây</div>
-    <div class="note">Nhận file PNG và TIF. Tên file: <b>_SL2</b> = số lượng, <b>_KTDOC120cm</b> = cao 120 cm, <b>_KTNGANG60cm</b> = ngang 60 cm. File TIF có sẵn kênh Spot1 thì giữ nguyên kênh đó.</div>
+    <div class="note">Nhận file PNG, TIF và AI/PDF có sẵn đường cắt (AI phải lưu kèm PDF; file AI giữ nguyên đường cắt của file, không dùng chế độ cắt bên dưới). Tên file: <b>_SL2</b> = số lượng, <b>_KTDOC120cm</b> = cao 120 cm, <b>_KTNGANG60cm</b> = ngang 60 cm. File TIF có sẵn kênh Spot1 thì giữ nguyên kênh đó.</div>
     <div>Thư mục: <span class="folder" id="folderName">—</span></div>
     <div class="files" id="fileList">Chưa có file</div>
     <label>DPI ảnh (khi PNG không ghi DPI)<input type="number" id="srcDpi" value="300" min="30" max="2400"></label>
@@ -263,7 +263,7 @@ async function pngInfo(file) {
 }
 
 // số lượng ghi ở cuối tên: "Ten_SL50", "Ten_SL(50)", "Ten_SL 50"
-const qtyOf = name => { const m = name.replace(/\.(png|tiff?)$/i, '').match(/_SL\s*\(?\s*(\d+)\s*\)?\s*$/i); return m ? +m[1] : 0; };
+const qtyOf = name => { const m = name.replace(/\.(png|tiff?|ai|pdf)$/i, '').match(/_SL\s*\(?\s*(\d+)\s*\)?\s*$/i); return m ? +m[1] : 0; };
 // _SL ở tên thư mục = số lượt (bộ hàng), _SL ở tên file = số bản của file trong mỗi lượt
 const setCount = p => S.folderQty || p.copies;
 function fileQty(f, p) { return (f.qty || 1) * setCount(p); }
@@ -276,8 +276,8 @@ function showFiles() {
   box.textContent = S.files.length ? '' : 'Không có file PNG trong thư mục';
   const mm = v => +v.toFixed(1), el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
   S.files.forEach((f, i) => {
-    const w = f.w || f.pw / (f.dpi || p.srcDpi) * 25.4, h = f.h || w * f.ph / f.pw, eff = Math.round(f.pw / (w / 25.4)), row = el('div', 'frow'), ctl = el('div', 'fctl');
-    row.append(el('div', 'fname', f.name + (f.kt ? '  [' + (f.kt.dir === 'DOC' ? 'dọc ' : 'ngang ') + f.kt.mm / 10 + ' cm]' : '') + (f.hasSpot ? '  [Spot1 có sẵn]' : '')));
+    const w = f.w || f.pw / (f.dpi || p.srcDpi) * 25.4, h = f.h || w * f.ph / f.pw, eff = f.ai ? Math.round(f.ai.imgDpi * f.ai.wmm / w) || 1e9 : Math.round(f.pw / (w / 25.4)), row = el('div', 'frow'), ctl = el('div', 'fctl');
+    row.append(el('div', 'fname', f.name + (f.kt ? '  [' + (f.kt.dir === 'DOC' ? 'dọc ' : 'ngang ') + f.kt.mm / 10 + ' cm]' : '') + (f.hasSpot ? '  [Spot1 có sẵn]' : '') + (f.ai ? '  [đường cắt có sẵn: ' + f.ai.how + ', ' + f.ai.loops.length + ' nét]' : '')));
     const inp = (k, v, tip) => { const e = el('input'); e.type = 'number'; e.min = 1; e.step = k === 'qty' ? 1 : 0.1; e.value = v; e.title = tip; e.dataset.i = i; e.dataset.k = k; return e; };
     ctl.append('SL', inp('qty', f.qty || 1, 'Số bản của file này trong mỗi lượt'), setCount(p) > 1 ? '× ' + setCount(p) + ' lượt = ' + fileQty(f, p) : '', ' ', inp('w', mm(w), 'Rộng (mm), cao tự theo tỉ lệ hình'), '×', inp('h', mm(h), 'Cao (mm), rộng tự theo tỉ lệ hình'), 'mm');
     if (f.ovW) { const b = el('button', '', '↺'); b.type = 'button'; b.title = 'Về kích thước gốc'; b.dataset.i = i; ctl.append(b); }
@@ -301,7 +301,7 @@ $('fileList').addEventListener('click', e => {
 });
 $('fileList').addEventListener('focusout', () => setTimeout(showFiles));
 /* ---------- đọc file TIF (kiểu Photoshop lưu): ảnh + kênh Spot1 có sẵn ---------- */
-const isTif = n => /\.tiff?$/i.test(n), isImg = n => /\.(png|tiff?)$/i.test(n);
+const isTif = n => /\.tiff?$/i.test(n), isImg = n => /\.(png|tiff?|ai|pdf)$/i.test(n);
 async function tiffTags(read) {
   const h = new DataView(await read(0, 8)), le = h.getUint16(0) === 0x4949;
   if (h.getUint16(2, le) !== 42) throw new Error('không phải TIF chuẩn (có thể là BigTIFF)');
@@ -412,7 +412,311 @@ async function decodeTIFF(file) {
   const bmp = await createImageBitmap(new ImageData(rgba, W, H)), spot = sp ? await createImageBitmap(new ImageData(sp, W, H)) : null;
   return { bmp, spot };
 }
+/* ---------- đọc file AI (lưu kèm PDF) hoặc PDF: hình in + đường cắt vẽ sẵn ----------
+   Đường cắt tìm theo thứ tự: nét màu spot tên CutContour/Cut/Die/Bế…, nét trong layer tên có cắt/cut/die…,
+   không có thì mọi nét chỉ viền không tô. Hình in dựng bằng pdf.js sau khi đã ẩn các nét cắt. */
+const isAi = n => /\.(ai|pdf)$/i.test(n);
+const CUT_RE = /cut|contour|die\b|thru|kiss|\bc[aắ]t\b|\bb[eế]\b|đường cắt|duong cat/i;
+const PDF_WS = /[\0\t\n\f\r ]/, PDF_DL = /[()<>\[\]{}\/%]/;
+const bytesStr = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 32768) s += String.fromCharCode.apply(null, u8.subarray(i, i + 32768)); return s; };
+const strBytes = s => { const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; };
+const pdfStr = v => { const r = v && v.str || ''; if (r.startsWith('\xFE\xFF')) { let o = ''; for (let i = 2; i + 1 < r.length; i += 2) o += String.fromCharCode(r.charCodeAt(i) << 8 | r.charCodeAt(i + 1)); return o; } return r; };
+// đọc 1 giá trị PDF từ vị trí pos: trả về [giá trị, vị trí sau]. Tên {n}, chuỗi {str} (byte thô), tham chiếu {ref, gen}, từ khoá {kw}
+function pdfParse(s, pos) {
+  let i = pos;
+  const ws = () => { for (;;) { while (i < s.length && PDF_WS.test(s[i])) i++; if (s[i] !== '%') break; while (i < s.length && s[i] !== '\n' && s[i] !== '\r') i++; } };
+  const val = () => {
+    ws(); if (i >= s.length) throw new Error('hết dữ liệu');
+    const c = s[i];
+    if (c === '<' && s[i + 1] === '<') { i += 2; const d = {}; for (;;) { ws(); if (s[i] === '>' && s[i + 1] === '>') { i += 2; return d; } const k = val(); if (!k || k.n == null) throw new Error('khoá hỏng'); d[k.n] = val(); } }
+    if (c === '[') { i++; const a = []; for (;;) { ws(); if (s[i] === ']') { i++; return a; } a.push(val()); } }
+    if (c === '/') { i++; const j = i; while (i < s.length && !PDF_WS.test(s[i]) && !PDF_DL.test(s[i])) i++; return { n: s.slice(j, i).replace(/#([0-9a-f]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16))) }; }
+    if (c === '(') {
+      i++; let d = 1, o = '';
+      while (i < s.length) {
+        const ch = s[i++];
+        if (ch === '\\') {
+          const e = s[i++];
+          if (/[0-7]/.test(e)) { let q = e; while (q.length < 3 && /[0-7]/.test(s[i])) q += s[i++]; o += String.fromCharCode(parseInt(q, 8) & 255); }
+          else if (e === '\r') { if (s[i] === '\n') i++; } else if (e !== '\n') o += { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f' }[e] || e;
+          continue;
+        }
+        if (ch === '(') d++; else if (ch === ')' && !--d) break;
+        o += ch;
+      }
+      return { str: o };
+    }
+    if (c === '<') { i++; const j = s.indexOf('>', i); let h = s.slice(i, j).replace(/\s/g, ''); i = j + 1; if (h.length % 2) h += '0'; let o = ''; for (let k = 0; k < h.length; k += 2) o += String.fromCharCode(parseInt(h.substr(k, 2), 16)); return { str: o }; }
+    const j = i; while (i < s.length && !PDF_WS.test(s[i]) && !PDF_DL.test(s[i])) i++;
+    if (i === j) { i++; return { kw: c }; }
+    const t = s.slice(j, i);
+    if (/^[+-]?(\d+\.?\d*|\.\d+)$/.test(t)) {
+      const m = /^\s+(\d+)\s+R(?![A-Za-z0-9])/.exec(s.slice(i, i + 24));
+      if (m && /^\d+$/.test(t)) { i += m[0].length; return { ref: +t, gen: +m[1] }; }
+      return +t;
+    }
+    return t === 'true' ? true : t === 'false' ? false : t === 'null' ? null : { kw: t };
+  };
+  const v = val(); return [v, i];
+}
+function pdfSer(v) {
+  if (v === null || v === undefined) return 'null'; if (v === true) return 'true'; if (v === false) return 'false';
+  if (typeof v === 'number') return String(+v.toFixed(6));
+  if (Array.isArray(v)) return '[' + v.map(pdfSer).join(' ') + ']';
+  if (v.ref != null) return v.ref + ' ' + v.gen + ' R';
+  if (v.n != null) return '/' + v.n.replace(/[^!-~]|[#()<>\[\]{}\/%]/g, c => '#' + c.charCodeAt(0).toString(16).padStart(2, '0'));
+  if (v.str != null) return '<' + [...v.str].map(c => c.charCodeAt(0).toString(16).padStart(2, '0')).join('') + '>';
+  if (v.kw != null) return v.kw;
+  return '<<' + Object.entries(v).map(([k, x]) => pdfSer({ n: k }) + ' ' + pdfSer(x)).join(' ') + '>>';
+}
+async function inflate(u8) {
+  const ds = new DecompressionStream('deflate'), w = ds.writable.getWriter();
+  w.write(u8).catch(() => { }); w.close().catch(() => { });
+  const out = [], r = ds.readable.getReader(); let n = 0;
+  try { for (;;) { const { done, value } = await r.read(); if (done) break; out.push(value); n += value.length; } }
+  catch (e) { if (!n) throw e; } // dư byte rác cuối luồng: giữ phần đã giải được
+  const o = new Uint8Array(n); let p = 0; for (const c of out) { o.set(c, p); p += c.length; } return o;
+}
+// mở PDF: lập chỉ mục mọi đối tượng (đối tượng sau cùng thắng, như bản lưu nối tiếp), kể cả trong luồng đối tượng nén
+async function pdfOpen(buf) {
+  const u8 = new Uint8Array(buf), s = bytesStr(u8);
+  if (s.slice(0, 1024).indexOf('%PDF') < 0) throw new Error('file AI chưa lưu kèm PDF — mở bằng Illustrator, Save As, tích "Create PDF Compatible File"');
+  const objs = new Map(), re = /(\d+)\s+(\d+)\s+obj\b/g;
+  let m;
+  while ((m = re.exec(s))) {
+    let v, j;
+    try { [v, j] = pdfParse(s, re.lastIndex); } catch (_) { continue; }
+    const o = { num: +m[1], gen: +m[2], v };
+    const sm = /^\s*stream(\r\n|\n|\r)?/.exec(s.slice(j, j + 16));
+    if (sm && v && typeof v === 'object') {
+      o.data = j + sm[0].length;
+      let len = v.Length;
+      if (typeof len !== 'number' || o.data + len > s.length) { const e = s.indexOf('endstream', o.data); len = (e < 0 ? s.length : e) - o.data; while (len > 0 && /[\r\n]/.test(s[o.data + len - 1])) len--; }
+      o.len = len; re.lastIndex = o.data + len;
+    } else re.lastIndex = j;
+    objs.set(o.num, o);
+  }
+  const R = v => { for (let k = 0; v && v.ref != null && k < 20; k++) { const o = objs.get(v.ref); v = o ? o.v : null; } return v; };
+  const texts = new Map();
+  const pdf = {
+    u8, s, objs, R,
+    async bytes(o) {
+      let d = u8.subarray(o.data, o.data + o.len);
+      let fl = R(o.v.Filter); fl = fl ? (Array.isArray(fl) ? fl : [fl]) : [];
+      for (const f of fl) { if (R(f).n === 'FlateDecode' || R(f).n === 'Fl') d = await inflate(d); else throw new Error('kiểu nén ' + R(f).n + ' chưa hỗ trợ'); }
+      return d;
+    },
+    async text(num) { if (!texts.has(num)) texts.set(num, bytesStr(await pdf.bytes(objs.get(num)))); return texts.get(num); },
+    texts
+  };
+  for (const o of [...objs.values()]) if (o.data != null && R(o.v.Type) && R(o.v.Type).n === 'ObjStm') {
+    try {
+      const t = bytesStr(await pdf.bytes(o)), N = R(o.v.N), F = R(o.v.First), hd = t.slice(0, F).trim().split(/\s+/).map(Number);
+      for (let k = 0; k < N; k++) if (!objs.has(hd[2 * k])) objs.set(hd[2 * k], { num: hd[2 * k], gen: 0, v: pdfParse(t, F + hd[2 * k + 1])[0] });
+    } catch (_) { }
+  }
+  // trailer của bản lưu cuối: bảng xref thường hoặc luồng xref
+  const sx = s.lastIndexOf('startxref'), prev = parseInt(s.slice(sx + 9, sx + 40).trim());
+  let tr = null;
+  try {
+    if (s.startsWith('xref', prev)) tr = pdfParse(s, s.indexOf('trailer', prev) + 7)[0];
+    else tr = pdfParse(s, s.indexOf('obj', prev) + 3)[0];
+  } catch (_) { }
+  if (!tr || !tr.Root) { const t = s.lastIndexOf('/Root'); tr = { Root: pdfParse(s, t + 5)[0] }; }
+  pdf.trailer = tr; pdf.prev = prev;
+  return pdf;
+}
+// đi hết nội dung trang: gom nét viền (ứng viên đường cắt) và khung bao của phần hình
+async function aiScan(pdf) {
+  const { R } = pdf;
+  let page = R(R(pdf.trailer.Root).Pages), res0 = null;
+  while (page && R(page.Type) && R(page.Type).n === 'Pages') { if (page.Resources) res0 = page.Resources; page = R(R(page.Kids)[0]); }
+  if (!page) throw new Error('không thấy trang trong file');
+  // nội dung trang (1 hoặc nhiều luồng) và mọi Form XObject: giải nén trước để chạy đồng bộ
+  let cl = page.Contents; // giữ tham chiếu tới luồng (cần số đối tượng để sửa), chỉ mở khi nó trỏ tới 1 mảng
+  if (cl && cl.ref != null && Array.isArray(R(cl))) cl = R(cl);
+  cl = Array.isArray(cl) ? cl : [cl];
+  const segs = [];
+  let text = '';
+  for (const c of cl) { const t = await pdf.text(c.ref); segs.push({ num: c.ref, at: text.length }); text += t + '\n'; }
+  const forms = new Set();
+  const walk = async (res, depth) => {
+    res = R(res); const X = res && R(res.XObject); if (!X || depth > 12) return;
+    for (const k in X) { const ref = X[k]; if (!ref || ref.ref == null || forms.has(ref.ref)) continue; const o = pdf.objs.get(ref.ref); if (!o || (R(o.v.Subtype) || {}).n !== 'Form') continue; forms.add(ref.ref); await pdf.text(ref.ref); await walk(o.v.Resources || res, depth + 1); }
+  };
+  const pres = page.Resources || res0;
+  await walk(pres, 0);
+  const strokes = [], art = [1e9, 1e9, -1e9, -1e9];
+  let imgDpi = Infinity;
+  const grow = (b, x, y) => { if (x < b[0]) b[0] = x; if (y < b[1]) b[1] = y; if (x > b[2]) b[2] = x; if (y > b[3]) b[3] = y; };
+  const mul = (a, b) => [a[0] * b[0] + a[1] * b[2], a[0] * b[1] + a[1] * b[3], a[2] * b[0] + a[3] * b[2], a[2] * b[1] + a[3] * b[3], a[4] * b[0] + a[5] * b[2] + b[4], a[4] * b[1] + a[5] * b[3] + b[5]];
+  const csOf = (res, nm) => {
+    if (!nm || /^Device/.test(nm)) return { kind: nm };
+    const C = R(R(res) && R(R(res).ColorSpace)), v = C && R(C[nm]);
+    if (Array.isArray(v)) { const k = R(v[0]).n; return { kind: k, spot: k === 'Separation' ? R(v[1]).n : k === 'DeviceN' ? R(v[1]).map(x => R(x).n).join(',') : '' }; }
+    return { kind: nm };
+  };
+  const run = (t, sg, res, M0, depth) => {
+    let M = M0, stack = [], scs = { kind: 'DeviceGray' }, subs = [], cur = null, layers = [];
+    const P = (x, y) => [M[0] * x + M[2] * y + M[4], M[1] * x + M[3] * y + M[5]];
+    const segOf = at => { let r = sg[0]; for (const g of sg) if (g.at <= at) r = g; return r; };
+    pdfOps(t, (op, a, at) => {
+      switch (op) {
+        case 'q': stack.push([M, scs]); break;
+        case 'Q': if (stack.length) [M, scs] = stack.pop(); break;
+        case 'cm': M = mul(a, M); break;
+        case 'CS': scs = csOf(res, a[0] && a[0].n); break;
+        case 'G': scs = { kind: 'DeviceGray' }; break; case 'RG': scs = { kind: 'DeviceRGB' }; break; case 'K': scs = { kind: 'DeviceCMYK' }; break;
+        case 'm': cur = [P(a[0], a[1])]; subs.push(cur); break;
+        case 'l': if (cur) cur.push(P(a[0], a[1])); break;
+        case 'c': case 'v': case 'y': if (cur) {
+          const p0 = cur[cur.length - 1], q = a.map(Number);
+          const p1 = op === 'v' ? p0 : P(q[0], q[1]), p2 = op === 'y' ? P(q[2], q[3]) : op === 'v' ? P(q[0], q[1]) : P(q[2], q[3]), p3 = op === 'c' ? P(q[4], q[5]) : P(q[2], q[3]);
+          const L = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) + Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) + Math.hypot(p3[0] - p2[0], p3[1] - p2[1]), n = Math.max(2, Math.min(200, Math.ceil(L / 1.2)));
+          for (let k = 1; k <= n; k++) { const u = k / n, w = 1 - u; cur.push([w * w * w * p0[0] + 3 * w * w * u * p1[0] + 3 * w * u * u * p2[0] + u * u * u * p3[0], w * w * w * p0[1] + 3 * w * w * u * p1[1] + 3 * w * u * u * p2[1] + u * u * u * p3[1]]); }
+        } break;
+        case 'h': if (cur && cur.length) { cur.closed = true; cur = [cur[0]]; subs.push(cur); } break; // điểm hiện tại quay về đầu đường con
+        case 're': { const [x, y, w, h] = a; const r = [P(x, y), P(x + w, y), P(x + w, y + h), P(x, y + h)]; r.closed = true; subs.push(r); cur = null; } break;
+        case 'S': case 's': case 'f': case 'F': case 'f*': case 'B': case 'B*': case 'b': case 'b*': case 'n': {
+          const sp = subs.filter(q => q.length > 1);
+          if (op !== 'n' && sp.length) {
+            if (/^[SsBb]/.test(op)) { const g = segOf(at); strokes.push({ subs: sp, fill: /^[Bb]/.test(op), cs: scs, layer: layers.join('/'), num: g.num, at: at - g.at, op }); }
+            if (/^[fFBb]/.test(op)) for (const q of sp) for (const [x, y] of q) grow(art, x, y);
+          }
+          subs = []; cur = null;
+        } break;
+        case 'BDC': case 'BMC': {
+          let nm = '';
+          if (op === 'BDC' && a[0] && a[0].n === 'OC') { const pr = R(R(res) && R(R(res).Properties)), oc = a[1] && a[1].n ? R(pr && pr[a[1].n]) : R(a[1]); nm = oc ? pdfStr(R(oc.Name)) : ''; }
+          layers.push(nm);
+        } break;
+        case 'EMC': layers.pop(); break;
+        case 'BI': for (const [x, y] of [P(0, 0), P(1, 0), P(0, 1), P(1, 1)]) grow(art, x, y); break;
+        case 'Do': {
+          const X = R(R(res) && R(R(res).XObject)), ref = X && X[a[0] && a[0].n], o = ref && pdf.objs.get(ref.ref);
+          if (!o) break;
+          const st = (R(o.v.Subtype) || {}).n;
+          if (st === 'Image') {
+            for (const [x, y] of [P(0, 0), P(1, 0), P(0, 1), P(1, 1)]) grow(art, x, y);
+            const dpi = R(o.v.Width) / (Math.hypot(M[0], M[1]) / 72); // độ nét ảnh dán trong file ở cỡ gốc
+            if (dpi > 0 && dpi < imgDpi) imgDpi = dpi;
+          }
+          else if (st === 'Form' && depth < 12 && pdf.texts.has(ref.ref)) {
+            const ocn = o.v.OC ? pdfStr(R(R(o.v.OC).Name)) : '';
+            layers.push(ocn);
+            run(pdf.texts.get(ref.ref), [{ num: ref.ref, at: 0 }], o.v.Resources || res, mul(R(o.v.Matrix) || [1, 0, 0, 1, 0, 0], M), depth + 1);
+            layers.pop();
+          }
+        } break;
+      }
+    });
+  };
+  run(text, segs, pres, [1, 0, 0, 1, 0, 0], 0);
+  // chọn đường cắt
+  let cuts = strokes.filter(st => st.cs && st.cs.spot && CUT_RE.test(st.cs.spot)), how = 'màu spot "' + (cuts[0] && cuts[0].cs.spot) + '"';
+  if (!cuts.length) { cuts = strokes.filter(st => st.layer && CUT_RE.test(st.layer)); how = 'layer "' + (cuts[0] && cuts[0].layer) + '"'; }
+  if (!cuts.length) { cuts = strokes.filter(st => !st.fill); how = 'nét viền không tô'; }
+  if (!cuts.length) throw new Error('không thấy đường cắt (nét viền) trong file');
+  for (const st of strokes) if (!cuts.includes(st)) for (const q of st.subs) for (const [x, y] of q) grow(art, x, y);
+  const box = art.slice(); for (const st of cuts) for (const q of st.subs) for (const [x, y] of q) grow(box, x, y);
+  return { cuts, how, box, imgDpi: isFinite(imgDpi) ? imgDpi : 0 };
+}
+// tách toán tử nội dung trang: cb(toán tử, toán hạng, vị trí của toán tử trong luồng)
+function pdfOps(t, cb) {
+  const n = t.length; let i = 0, args = [];
+  while (i < n) {
+    const c = t.charCodeAt(i);
+    if (c === 32 || c === 10 || c === 13 || c === 9 || c === 12 || c === 0) { i++; continue; }
+    if (c === 37) { while (i < n && t[i] !== '\n' && t[i] !== '\r') i++; continue; }
+    if ((c >= 48 && c <= 57) || c === 45 || c === 43 || c === 46) { let j = i + 1; while (j < n) { const d = t.charCodeAt(j); if ((d >= 48 && d <= 57) || d === 46) j++; else break; } args.push(+t.slice(i, j) || 0); i = j; continue; }
+    if (c === 47 || c === 40 || c === 60 || c === 91) { try { const [v, j] = pdfParse(t, i); args.push(v); i = j; } catch (_) { i++; } continue; }
+    let j = i; while (j < n && !PDF_WS.test(t[j]) && !PDF_DL.test(t[j])) j++;
+    if (j === i) { i++; continue; }
+    const op = t.slice(i, j);
+    if (op === 'BI') { const re = /\sEI(?=\s|$)/g; re.lastIndex = t.indexOf('ID', j) + 2; const m = re.exec(t); cb('BI', [], i); i = m ? m.index + 3 : n; args = []; continue; }
+    cb(op, args, i); args = []; i = j;
+  }
+}
+// tạo bản PDF ẩn các nét cắt: lưu nối tiếp (thêm luồng nội dung đã sửa + bảng xref mới trỏ về bản cũ)
+function aiStrip(pdf, cuts) {
+  const by = new Map();
+  for (const st of cuts) { if (!by.has(st.num)) by.set(st.num, []); by.get(st.num).push(st); }
+  const parts = ['\n'], xref = [];
+  let off = pdf.u8.length + 1;
+  for (const [num, list] of by) {
+    const o = pdf.objs.get(num), t = pdf.texts.get(num).split('');
+    for (const st of list) { const rep = { S: 'n', s: 'n', B: 'f', 'B*': 'f*', b: 'f', 'b*': 'f*' }[st.op]; for (let k = 0; k < rep.length; k++) t[st.at + k] = rep[k]; }
+    const body = t.join(''), d = { ...o.v }; delete d.Filter; delete d.DecodeParms; d.Length = body.length;
+    xref.push([num, o.gen, off]);
+    const chunk = num + ' ' + o.gen + ' obj\n' + pdfSer(d) + '\nstream\n' + body + '\nendstream\nendobj\n';
+    parts.push(chunk); off += chunk.length;
+  }
+  const T = pdf.trailer, size = Math.max(T.Size || 0, ...[...pdf.objs.keys()].map(k => k + 1));
+  let x = 'xref\n'; for (const [num, gen, at] of xref.sort((a, b) => a[0] - b[0])) x += num + ' 1\n' + String(at).padStart(10, '0') + ' ' + String(gen).padStart(5, '0') + ' n\r\n';
+  const tr = { Size: size, Root: T.Root, Prev: pdf.prev }; if (T.Info) tr.Info = T.Info; if (T.ID) tr.ID = T.ID;
+  x += 'trailer\n' + pdfSer(tr) + '\nstartxref\n' + off + '\n%%EOF\n';
+  parts.push(x);
+  const add = strBytes(parts.join('')), out = new Uint8Array(pdf.u8.length + add.length);
+  out.set(pdf.u8); out.set(add, pdf.u8.length);
+  return out;
+}
+async function aiInfo(file) {
+  const pdf = await pdfOpen(await file.arrayBuffer()), { cuts, how, box, imgDpi } = await aiScan(pdf);
+  const [x0, y0, x1, y1] = box, k = 25.4 / 72;
+  const loops = [];
+  for (const st of cuts) for (const q of st.subs) if (q.length >= 3) loops.push(q.map(([x, y]) => [(x - x0) * k, (y1 - y) * k]));
+  return { w: x1 - x0, h: y1 - y0, dpi: 72, ai: { bytes: aiStrip(pdf, cuts), box, loops, how, imgDpi, wmm: (x1 - x0) * k } };
+}
+let pdfjsP = null;
+const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+const loadPdfjs = () => pdfjsP || (pdfjsP = new Promise((ok, no) => {
+  const sc = document.createElement('script'); sc.src = PDFJS + 'pdf.min.js';
+  sc.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js'; ok(window.pdfjsLib); };
+  sc.onerror = () => { pdfjsP = null; no(new Error('không tải được bộ đọc PDF (máy cần có mạng)')); };
+  document.head.append(sc);
+}));
+// dựng hình in của file AI (đã ẩn nét cắt), cắt đúng khung, nền trong suốt, ppm điểm ảnh mỗi mm
+async function aiRender(f, ppm) {
+  const lib = await loadPdfjs();
+  if (!f.ai.doc) f.ai.doc = await lib.getDocument({ data: f.ai.bytes.slice(), isEvalSupported: false }).promise;
+  const page = await f.ai.doc.getPage(1), vb = page.view, [x0, , x1, y1] = f.ai.box;
+  let sc = ppm * 25.4 / 72;
+  const bw = x1 - x0, bh = f.ai.box[3] - f.ai.box[1];
+  sc = Math.min(sc, 16000 / bw, 16000 / bh, Math.sqrt(120e6 / (bw * bh))); // giới hạn khung vẽ của trình duyệt
+  const W = Math.max(1, Math.round(bw * sc)), H = Math.max(1, Math.round(bh * sc));
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const vp = page.getViewport({ scale: sc, offsetX: -(x0 - vb[0]) * sc, offsetY: -(vb[3] - y1) * sc });
+  const ctx = cv.getContext('2d');
+  await page.render({ canvasContext: ctx, viewport: vp, background: 'rgba(0,0,0,0)', intent: 'print' }).promise;
+  // ảnh nền trắng (không trong suốt): phần trắng nối ra mép khung coi là nền → trong suốt, để đường bo ôm sát hình.
+  // Tìm trên bản nhỏ ~4 điểm/mm rồi xoá phóng lên: nền trắng không in mực nên mép mềm không ảnh hưởng bản in
+  const k4 = Math.min(1, 4 / (sc * 72 / 25.4)), w4 = Math.max(1, Math.round(W * k4)), h4 = Math.max(1, Math.round(H * k4));
+  const sm = new OffscreenCanvas(w4, h4), sx = sm.getContext('2d', { willReadFrequently: true });
+  sx.drawImage(cv, 0, 0, w4, h4);
+  const id = sx.getImageData(0, 0, w4, h4), d = id.data;
+  const white = j => d[j * 4 + 3] >= 200 && d[j * 4] >= 235 && d[j * 4 + 1] >= 235 && d[j * 4 + 2] >= 235;
+  let n = 0, wt = 0;
+  for (let x = 0; x < w4; x++) for (const y of [0, h4 - 1]) { n++; if (white(y * w4 + x)) wt++; }
+  for (let y = 0; y < h4; y++) for (const x of [0, w4 - 1]) { n++; if (white(y * w4 + x)) wt++; }
+  f.ai.whiteBg = wt >= 0.6 * n;
+  if (f.ai.whiteBg) {
+    const bg = new Uint8Array(w4 * h4), st = [];
+    for (let x = 0; x < w4; x++) st.push(x, (h4 - 1) * w4 + x);
+    for (let y = 0; y < h4; y++) st.push(y * w4, y * w4 + w4 - 1);
+    while (st.length) {
+      const j = st.pop(); if (bg[j] || (d[j * 4 + 3] >= ALPHA_MIN && !white(j))) continue; bg[j] = 1;
+      const x = j % w4; if (x > 0) st.push(j - 1); if (x < w4 - 1) st.push(j + 1); if (j >= w4) st.push(j - w4); if (j < w4 * h4 - w4) st.push(j + w4);
+    }
+    for (let j = 0; j < bg.length; j++) { d[j * 4] = d[j * 4 + 1] = d[j * 4 + 2] = 0; d[j * 4 + 3] = bg[j] ? 255 : 0; }
+    sx.putImageData(id, 0, 0);
+    ctx.globalCompositeOperation = 'destination-out'; ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(sm, 0, 0, W, H); ctx.globalCompositeOperation = 'source-over';
+  }
+  const bmp = await createImageBitmap(cv); cv.width = cv.height = 0;
+  return bmp;
+}
 async function sourceOf(f) {
+  if (f.ai) { if (!f.src || f.srcW !== f.w) { f.src = await aiRender(f, 300 / 25.4); f.srcW = f.w; } return f.src; } // vector: dựng theo cỡ in
   if (!f.tif) return f.file;
   if (!f.src) { const d = await decodeTIFF(f.file); f.src = d.bmp; f.spotSrc = d.spot; }
   return f.src;
@@ -424,9 +728,9 @@ async function setFiles(list, folder, dir) {
   S.folderQty = qtyOf(S.folder);
   for (const f of pngs) {
     try {
-      const tif = isTif(f.name), i = tif ? await tiffInfo(f) : await pngInfo(f);
+      const tif = isTif(f.name), i = isAi(f.name) ? await aiInfo(f) : tif ? await tiffInfo(f) : await pngInfo(f);
       const kt = f.name.match(/_KT(DOC|NGANG)\s*(\d+(?:[.,]\d+)?)\s*cm/i); // _KTDOC120cm / _KTNGANG60cm
-      S.files.push({ file: f, name: f.name, tif, hasSpot: !!i.spot, qty: qtyOf(f.name), pw: i.w, ph: i.h, dpi: i.dpi || f._dpi || 0,
+      S.files.push({ file: f, name: f.name, tif, ai: i.ai || null, hasSpot: !!i.spot, qty: qtyOf(f.name), pw: i.w, ph: i.h, dpi: i.dpi || f._dpi || 0,
         kt: kt ? { dir: kt[1].toUpperCase(), mm: parseFloat(kt[2].replace(',', '.')) * 10 } : null });
     }
     catch (e) { log('Bỏ qua ' + f.name + ': ' + e.message, 'warn'); }
@@ -646,8 +950,38 @@ async function buildGeometry(p) {
     cx.clearRect(0, 0, gw, gh); cx.drawImage(bmp, P / r, P / r, f.w / r, f.h / r);
     const px = cx.getImageData(0, 0, gw, gh).data, N = gw * gh, m = new Uint8Array(N);
     for (let k = 0; k < N; k++) m[k] = px[k * 4 + 3] >= ALPHA_MIN ? 1 : 0;
+    let aiLoops = null; // nét cắt có sẵn trong file AI (đã co giãn theo cỡ in)
+    if (f.ai) {
+      const k = f.w / f.ai.wmm;
+      aiLoops = [];
+      cx.setTransform(1 / r, 0, 0, 1 / r, 0, 0); cx.clearRect(0, 0, gw * r, gh * r); cx.fillStyle = '#000';
+      for (const C of f.ai.loops) {
+        let L = C.map(([x, y]) => [x * k + P, y * k + P]);
+        if (area(L) > 0) L.reverse(); // cùng chiều với đường cắt app tự tạo
+        L = simplifyClosed(L, p.tol);
+        if (L.length < 3) continue;
+        aiLoops.push(L);
+        cx.beginPath(); L.forEach(([x, y], j) => j ? cx.lineTo(x, y) : cx.moveTo(x, y)); cx.closePath(); cx.fill();
+      }
+      const q = cx.getImageData(0, 0, gw, gh).data;
+      let all = 0, inside = 0;
+      for (let j = 0; j < N; j++) if (m[j]) { all++; if (q[j * 4 + 3] > 0) inside++; }
+      f.ai.outer = !all || inside >= 0.98 * all;
+      if (f.ai.outer) { // nét cắt của file bao kín gần hết hình (≥ 98%) = đã có đường bo ngoài: giữ nguyên, không tạo thêm
+        const dC = new Float64Array(N);
+        for (let j = 0; j < N; j++) dC[j] = m[j] || q[j * 4 + 3] > 0 ? 0 : 1e20;
+        edt(dC, gw, gh);
+        const o = new Uint8Array(gwc * ghc), lim = (p.gap / 2 / r + 0.5) ** 2;
+        for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) if (dC[y * gw + x] <= lim) o[((y / fk) | 0) * gwc + ((x / fk) | 0)] = 1;
+        const g = { loops: aiLoops, occ: o };
+        Object.assign(f, g); remember(f, gkey, g);
+        continue;
+      }
+      // chỉ có nét cắt bên trong hình: tạo đường bo ngoài như ảnh PNG quanh (hình ∪ nét cắt), cuối cùng thêm nét cắt của file
+      for (let j = 0; j < N; j++) if (q[j * 4 + 3] > 0) m[j] = 1;
+    }
     const key = fnv(m) + ':' + bw + 'x' + bh;
-    if (cache.has(key)) { Object.assign(f, cache.get(key)); remember(f, gkey, cache.get(key)); continue; }
+    if (!aiLoops && cache.has(key)) { Object.assign(f, cache.get(key)); remember(f, gkey, cache.get(key)); continue; }
     // lấp lỗ bên trong: chỉ nền nối ra mép mới là ngoài
     const out = new Uint8Array(N), st = [];
     for (let x = 0; x < gw; x++) { st.push(x, (gh - 1) * gw + x); }
@@ -710,8 +1044,10 @@ async function buildGeometry(p) {
       const lim = (p.gap / 2 / r + 0.5) ** 2;
       for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) if (dC[y * gw + x] <= lim || sdf[y * gw + x] <= occLim) o[((y / fk) | 0) * gwc + ((x / fk) | 0)] = 1;
     }
+    if (aiLoops) loops.push(...aiLoops);
     const g = { loops, occ: o };
-    cache.set(key, g); Object.assign(f, g); remember(f, gkey, g);
+    if (!aiLoops) cache.set(key, g);
+    Object.assign(f, g); remember(f, gkey, g);
   }
   const f0 = S.files[0], same = S.files.every(f => f.gwc === f0.gwc && f.ghc === f0.ghc);
   let occ = null;
@@ -1893,6 +2229,11 @@ async function run(force, retried) {
   let again = false;
   try {
     const p = params(), gk = [p.off, p.shape, p.join, p.tol, p.gap, p.srcDpi, p.forceW, S.files.length, S.files[0].name].join('|');
+    if (p.machine !== 'tranh' && S.files.some(f => f.ai)) { // file AI/PDF có đường cắt sẵn chỉ làm cho máy cắt Tranh, máy bế HBC giữ nguyên như cũ
+      S.plan = null; renderStats(); draw(); $('btnCorel').disabled = true; S.busy = false;
+      progress(0, 'File AI/PDF chỉ dùng cho máy cắt Tranh: chọn máy cắt Tranh, hoặc bỏ file AI ra khỏi thư mục để in máy bế HBC.', 'err');
+      return;
+    }
     if (force || gk !== geoKey || !S.geo) { S.geo = await buildGeometry(p); geoKey = gk; }
     progress(0.95, 'Đang tìm cách xếp tối ưu…'); await sleep();
     S.plan = await planLayout(S.geo, p); S.sheet = Math.min(S.sheet, S.plan ? S.plan.sheets.length - 1 : 0);
